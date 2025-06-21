@@ -531,124 +531,67 @@ class BOQProcessor:
             return False
 
     def _find_column_numbers(self, worksheet, header_row_num, column_map):
-        """Find actual column numbers in Excel sheet with enhanced debugging"""
+        """Thai BOQ-specific column finder that uses fixed positions based on sheet name"""
+        sheet_name = worksheet.title
+        print(f"\n📋 Processing sheet: {sheet_name} with fixed Thai BOQ column mapping")
+        
         if header_row_num is None:
-            print(f"⚠️ No header row specified, defaulting to row 0")
-            header_row_num = 0
-            
+            # Default header rows based on sheet type
+            if "Int" in sheet_name:
+                header_row_num = 9
+                print(f"Using default header row 9 for Interior sheet")
+            elif "EE" in sheet_name:
+                header_row_num = 7
+                print(f"Using default header row 7 for EE sheet")
+            elif "AC" in sheet_name:
+                header_row_num = 5
+                print(f"Using default header row 5 for AC sheet")
+            elif "FP" in sheet_name:
+                header_row_num = 7
+                print(f"Using default header row 7 for FP sheet")
+            else:
+                header_row_num = 8
+                print(f"Using default header row 8 for unknown sheet type")
+        
         header_row_excel = header_row_num + 1
+        print(f"Header row in Excel: {header_row_excel}")
         
-        print(f"🔍 Looking for headers in row {header_row_excel}")
-        
-        # Get all headers in the row
-        headers = {}
-        header_values = []
-        for col_num in range(1, worksheet.max_column + 1):
-            cell_value = worksheet.cell(row=header_row_excel, column=col_num).value
-            if cell_value:
-                clean_value = str(cell_value).strip()
-                headers[clean_value] = col_num
-                header_values.append(f"Col {col_num}: '{clean_value}'")
-        
-        print(f"📊 Found {len(headers)} headers: {', '.join(header_values)}")
-        
-        # Map to column numbers
+        # Initialize result mapping
         column_numbers = {}
-        mapped_columns = []
         
-        # First attempt: Direct mapping by exact match
-        print(f"🔄 Attempting exact header matching...")
-        for original_col, mapped_col in column_map.items():
-            original_col_str = str(original_col)
-            if original_col_str in headers:
-                column_numbers[mapped_col] = headers[original_col_str]
-                mapped_columns.append(f"{mapped_col} -> col {headers[original_col_str]} (exact match with '{original_col_str}')")
-        
-        # Second attempt: Case-insensitive and whitespace normalized matching
-        if len(column_numbers) < 5:  # If we're missing some columns, try case-insensitive matching
-            print(f"🔄 Trying case-insensitive header matching...")
-            header_map_insensitive = {k.lower().strip(): v for k, v in headers.items()}
-            
-            for original_col, mapped_col in column_map.items():
-                if mapped_col not in column_numbers:  # Skip if already mapped
-                    original_col_norm = str(original_col).lower().strip()
-                    if original_col_norm in header_map_insensitive:
-                        col_num = header_map_insensitive[original_col_norm]
-                        column_numbers[mapped_col] = col_num
-                        mapped_columns.append(f"{mapped_col} -> col {col_num} (case-insensitive match with '{original_col_norm}')")
-        
-        # Third attempt: Pattern matching for critical columns
-        if len(column_numbers) < 5:
-            print(f"🔄 Trying pattern matching for missing columns...")
-            patterns = {
-                'material_cost': ['ค่าวัสดุ', 'วัสดุ', 'material', 'mat', 'ราคาวัสดุ', 'cost of material', 'cost_mat'],
-                'labor_cost': ['ค่าแรงงาน', 'แรงงาน', 'แรง', 'labor', 'labour', 'ค่าจ้าง', 'cost of labor', 'cost_lab'],
-                'total_cost': ['รวม', 'รวมเป็นเงิน', 'total', 'ราคารวม', 'sum', 'amount', 'total price', 'total_amount'],
-                'quantity': ['จำนวน', 'quantity', 'qty', 'amount', 'count', 'number', 'num'],
-                'unit': ['หน่วย', 'unit', 'units', 'u/m', 'uom']
+        # Check if this is an Interior sheet or System sheet
+        if "Int" in sheet_name:
+            # Interior sheet mapping
+            print("Using Interior sheet mapping")
+            column_numbers = {
+                'code': 2,        # Column B
+                'name': 3,        # Column C
+                'quantity': 4,    # Column D
+                'unit': 5,        # Column E
+                'material_cost': 6, # Column F
+                'labor_cost': 7,  # Column G
+                'total_cost': 8   # Column H
             }
-            
-            for header_text, col_num in headers.items():
-                header_lower = header_text.lower()
-                for mapped_name, search_patterns in patterns.items():
-                    if mapped_name not in column_numbers:  # Skip if already found
-                        for pattern in search_patterns:
-                            if pattern in header_lower:
-                                column_numbers[mapped_name] = col_num
-                                mapped_columns.append(f"{mapped_name} -> col {col_num} (pattern match '{pattern}' in '{header_text}')")
-                                break
-        
-        # Fourth attempt: Positional guessing for standard BOQ layouts
-        if len(column_numbers) < 5:
-            print(f"🔄 Attempting positional mapping as last resort...")
-            # Standard Thai BOQ layout
-            positional_mapping = {
-                1: ('code', 'Item code column'),
-                2: ('name', 'Item name/description column'),
-                3: ('quantity', 'Quantity column'),
-                4: ('unit', 'Unit column'),
-                5: ('material_cost', 'Material cost column'),
-                6: ('labor_cost', 'Labor cost column'),
-                7: ('total_cost', 'Total cost column')
+        else:
+            # System sheet mapping (EE, AC, FP)
+            print("Using System sheet mapping")
+            column_numbers = {
+                'code': 2,        # Column B
+                'name': 3,        # Column C
+                'unit': 6,        # Column F
+                'quantity': 7,    # Column G
+                'material_cost': 8, # Column H
+                'labor_cost': 10,  # Column J
+                'total_cost': 12   # Column L
             }
-            
-            for pos, (mapped_name, description) in positional_mapping.items():
-                if mapped_name not in column_numbers and pos <= worksheet.max_column:
-                    # Check if the column has any numeric data (for cost columns)
-                    if mapped_name in ['material_cost', 'labor_cost', 'total_cost', 'quantity']:
-                        # Check a few rows to see if this column contains numbers
-                        has_numbers = False
-                        for row in range(header_row_excel + 1, min(header_row_excel + 10, worksheet.max_row + 1)):
-                            cell_value = worksheet.cell(row=row, column=pos).value
-                            if isinstance(cell_value, (int, float)) and cell_value > 0:
-                                has_numbers = True
-                                break
-                                
-                        if has_numbers or mapped_name == 'quantity':  # Always consider quantity column
-                            column_numbers[mapped_name] = pos
-                            mapped_columns.append(f"{mapped_name} -> col {pos} (positional guess: {description})")
-                    else:
-                        # For non-numeric columns, just use position
-                        column_numbers[mapped_name] = pos
-                        mapped_columns.append(f"{mapped_name} -> col {pos} (positional guess: {description})")
         
-        # Report results
-        print(f"\n📋 Column mapping results:")
-        for mapping in mapped_columns:
-            print(f"  ✓ {mapping}")
-            
-        # Check for missing critical columns
-        missing_columns = []
-        for col in ['material_cost', 'labor_cost', 'quantity']:
-            if col not in column_numbers:
-                missing_columns.append(col)
-                
-        if missing_columns:
-            print(f"⚠️ WARNING: Could not find these critical columns: {', '.join(missing_columns)}")
+        print("Column mapping for this sheet:")
+        for col_name, col_num in column_numbers.items():
+            import openpyxl
+            col_letter = openpyxl.utils.get_column_letter(col_num)
+            print(f"  - {col_name}: Column {col_letter} ({col_num})")
         
-        return column_numbers
-
-    def setup_routes(self):
+        return column_numbersdef setup_routes(self):
         @self.app.route('/api/process-boq', methods=['POST'])
         def process_boq_route():
             if 'file' not in request.files: 

@@ -531,191 +531,109 @@ class BOQProcessor:
             return False
 
     def _find_column_numbers(self, worksheet, header_row_num, column_map):
-        """Find actual column numbers in Excel sheet with enhanced debugging"""
-        if header_row_num is None:
-            print(f"⚠️ No header row specified, defaulting to row 0")
-            header_row_num = 0
-            
-        header_row_excel = header_row_num + 1
+        """Fixed column mapping for Thai BOQ format"""
+        sheet_name = worksheet.title
+        print(f"\n📋 Processing sheet: {sheet_name}")
         
-        print(f"🔍 Looking for headers in row {header_row_excel}")
-        
-        # Get all headers in the row
-        headers = {}
-        header_values = []
-        for col_num in range(1, worksheet.max_column + 1):
-            cell_value = worksheet.cell(row=header_row_excel, column=col_num).value
-            if cell_value:
-                clean_value = str(cell_value).strip()
-                headers[clean_value] = col_num
-                header_values.append(f"Col {col_num}: '{clean_value}'")
-        
-        print(f"📊 Found {len(headers)} headers: {', '.join(header_values)}")
-        
-        # Map to column numbers
+        # Initialize with default fixed column positions for Thai BOQ
         column_numbers = {}
-        mapped_columns = []
         
-        # First attempt: Direct mapping by exact match
-        print(f"🔄 Attempting exact header matching...")
-        for original_col, mapped_col in column_map.items():
-            original_col_str = str(original_col)
-            if original_col_str in headers:
-                column_numbers[mapped_col] = headers[original_col_str]
-                mapped_columns.append(f"{mapped_col} -> col {headers[original_col_str]} (exact match with '{original_col_str}')")
-        
-        # Second attempt: Case-insensitive and whitespace normalized matching
-        if len(column_numbers) < 5:  # If we're missing some columns, try case-insensitive matching
-            print(f"🔄 Trying case-insensitive header matching...")
-            header_map_insensitive = {k.lower().strip(): v for k, v in headers.items()}
-            
-            for original_col, mapped_col in column_map.items():
-                if mapped_col not in column_numbers:  # Skip if already mapped
-                    original_col_norm = str(original_col).lower().strip()
-                    if original_col_norm in header_map_insensitive:
-                        col_num = header_map_insensitive[original_col_norm]
-                        column_numbers[mapped_col] = col_num
-                        mapped_columns.append(f"{mapped_col} -> col {col_num} (case-insensitive match with '{original_col_norm}')")
-        
-        # Third attempt: Pattern matching for critical columns
-        if len(column_numbers) < 5:
-            print(f"🔄 Trying pattern matching for missing columns...")
-            patterns = {
-                'material_cost': ['ค่าวัสดุ', 'วัสดุ', 'material', 'mat', 'ราคาวัสดุ', 'cost of material', 'cost_mat'],
-                'labor_cost': ['ค่าแรงงาน', 'แรงงาน', 'แรง', 'labor', 'labour', 'ค่าจ้าง', 'cost of labor', 'cost_lab'],
-                'total_cost': ['รวม', 'รวมเป็นเงิน', 'total', 'ราคารวม', 'sum', 'amount', 'total price', 'total_amount'],
-                'quantity': ['จำนวน', 'quantity', 'qty', 'amount', 'count', 'number', 'num'],
-                'unit': ['หน่วย', 'unit', 'units', 'u/m', 'uom']
+        # Use different mappings based on sheet type
+        if "Int" in sheet_name:
+            # Interior sheet - values in F, G, H columns
+            column_numbers = {
+                'code': 2,          # B
+                'name': 3,          # C
+                'quantity': 4,      # D
+                'unit': 5,          # E
+                'material_cost': 6, # F
+                'labor_cost': 7,    # G 
+                'total_cost': 8     # H
             }
-            
-            for header_text, col_num in headers.items():
-                header_lower = header_text.lower()
-                for mapped_name, search_patterns in patterns.items():
-                    if mapped_name not in column_numbers:  # Skip if already found
-                        for pattern in search_patterns:
-                            if pattern in header_lower:
-                                column_numbers[mapped_name] = col_num
-                                mapped_columns.append(f"{mapped_name} -> col {col_num} (pattern match '{pattern}' in '{header_text}')")
-                                break
-        
-        # Fourth attempt: Positional guessing for standard BOQ layouts
-        if len(column_numbers) < 5:
-            print(f"🔄 Attempting positional mapping as last resort...")
-            # Standard Thai BOQ layout
-            positional_mapping = {
-                1: ('code', 'Item code column'),
-                2: ('name', 'Item name/description column'),
-                3: ('quantity', 'Quantity column'),
-                4: ('unit', 'Unit column'),
-                5: ('material_cost', 'Material cost column'),
-                6: ('labor_cost', 'Labor cost column'),
-                7: ('total_cost', 'Total cost column')
+            print("Using Interior sheet mapping: F=material, G=labor, H=total")
+        else:
+            # System sheets (EE, AC, FP) - values in H, J, L columns
+            column_numbers = {
+                'code': 2,          # B
+                'name': 3,          # C
+                'unit': 6,          # F
+                'quantity': 7,      # G
+                'material_cost': 8, # H
+                'labor_cost': 10,   # J
+                'total_cost': 12    # L
             }
-            
-            for pos, (mapped_name, description) in positional_mapping.items():
-                if mapped_name not in column_numbers and pos <= worksheet.max_column:
-                    # Check if the column has any numeric data (for cost columns)
-                    if mapped_name in ['material_cost', 'labor_cost', 'total_cost', 'quantity']:
-                        # Check a few rows to see if this column contains numbers
-                        has_numbers = False
-                        for row in range(header_row_excel + 1, min(header_row_excel + 10, worksheet.max_row + 1)):
-                            cell_value = worksheet.cell(row=row, column=pos).value
-                            if isinstance(cell_value, (int, float)) and cell_value > 0:
-                                has_numbers = True
-                                break
-                                
-                        if has_numbers or mapped_name == 'quantity':  # Always consider quantity column
-                            column_numbers[mapped_name] = pos
-                            mapped_columns.append(f"{mapped_name} -> col {pos} (positional guess: {description})")
-                    else:
-                        # For non-numeric columns, just use position
-                        column_numbers[mapped_name] = pos
-                        mapped_columns.append(f"{mapped_name} -> col {pos} (positional guess: {description})")
+            print("Using System sheet mapping: H=material, J=labor, L=total")
         
-        # Report results
-        print(f"\n📋 Column mapping results:")
-        for mapping in mapped_columns:
-            print(f"  ✓ {mapping}")
-            
-        # Check for missing critical columns
-        missing_columns = []
-        for col in ['material_cost', 'labor_cost', 'quantity']:
-            if col not in column_numbers:
-                missing_columns.append(col)
-                
-        if missing_columns:
-            print(f"⚠️ WARNING: Could not find these critical columns: {', '.join(missing_columns)}")
-        
-        return column_numbers
-
+        return column_numbers 
+    
     def setup_routes(self):
         @self.app.route('/api/process-boq', methods=['POST'])
         def process_boq_route():
-            if 'file' not in request.files: 
-                return jsonify({'success': False, 'error': 'No file uploaded'})
+                if 'file' not in request.files: 
+                    return jsonify({'success': False, 'error': 'No file uploaded'})
+                    
+                file = request.files['file']
+                filepath = os.path.join(self.upload_folder, secure_filename(file.filename))
+                file.save(filepath)
                 
-            file = request.files['file']
-            filepath = os.path.join(self.upload_folder, secure_filename(file.filename))
-            file.save(filepath)
-            
-            try:
-                excel_file = pd.ExcelFile(filepath)
-                session_data = {'sheets': {}, 'original_filepath': filepath}
-                
-                sheets_to_process = [s for s in excel_file.sheet_names if "sum" not in s.lower()]
-                
-                for sheet_name in sheets_to_process:
-                    raw_df = pd.read_excel(filepath, sheet_name=sheet_name, header=None)
-                    header_row = self.find_header_row(raw_df)
-                    df = pd.read_excel(filepath, sheet_name=sheet_name, 
-                                     header=header_row if header_row is not None else 0)
+                try:
+                    excel_file = pd.ExcelFile(filepath)
+                    session_data = {'sheets': {}, 'original_filepath': filepath}
                     
-                    # Simple processing - no grouping, match each row individually
-                    match_df = self._prepare_dataframe_simple(df.copy())
+                    sheets_to_process = [s for s in excel_file.sheet_names if "sum" not in s.lower()]
                     
-                    processed_matches = {}
-                    total_rows = len(match_df)
-                    matched_count = 0
-                    
-                    for _, row in match_df.iterrows():
-                        item_name = str(row['name']).strip()
-                        if len(item_name) > 2:  # Only match meaningful names
-                            match = self.find_best_match(item_name)
-                            if match:
-                                processed_matches[row['original_row_index']] = match
-                                matched_count += 1
-                                print(f"  Match: '{item_name[:40]}...' -> {match['similarity']:.0f}% similarity")
-                    
-                    print(f"Sheet {sheet_name}: {matched_count}/{total_rows} items matched")
+                    for sheet_name in sheets_to_process:
+                        raw_df = pd.read_excel(filepath, sheet_name=sheet_name, header=None)
+                        header_row = self.find_header_row(raw_df)
+                        df = pd.read_excel(filepath, sheet_name=sheet_name, 
+                                        header=header_row if header_row is not None else 0)
+                        
+                        # Simple processing - no grouping, match each row individually
+                        match_df = self._prepare_dataframe_simple(df.copy())
+                        
+                        processed_matches = {}
+                        total_rows = len(match_df)
+                        matched_count = 0
+                        
+                        for _, row in match_df.iterrows():
+                            item_name = str(row['name']).strip()
+                            if len(item_name) > 2:  # Only match meaningful names
+                                match = self.find_best_match(item_name)
+                                if match:
+                                    processed_matches[row['original_row_index']] = match
+                                    matched_count += 1
+                                    print(f"  Match: '{item_name[:40]}...' -> {match['similarity']:.0f}% similarity")
+                        
+                        print(f"Sheet {sheet_name}: {matched_count}/{total_rows} items matched")
 
-                    session_data['sheets'][sheet_name] = {
-                        'header_row_num': header_row,
-                        'processed_matches': processed_matches,
-                        'column_map': self.detect_column_mapping(df),
-                        'total_rows': total_rows,
-                        'matched_count': matched_count
-                    }
+                        session_data['sheets'][sheet_name] = {
+                            'header_row_num': header_row,
+                            'processed_matches': processed_matches,
+                            'column_map': self.detect_column_mapping(df),
+                            'total_rows': total_rows,
+                            'matched_count': matched_count
+                        }
 
-                session_id = str(uuid.uuid4())
-                self.store_processing_session(session_id, session_data)
-                
-                # Calculate summary
-                total_items = sum(sheet['total_rows'] for sheet in session_data['sheets'].values())
-                total_matches = sum(sheet['matched_count'] for sheet in session_data['sheets'].values())
-                
-                return jsonify({
-                    'success': True, 
-                    'session_id': session_id,
-                    'summary': {
-                        'total_items': total_items,
-                        'matched_items': total_matches,
-                        'match_rate': (total_matches / total_items * 100) if total_items > 0 else 0
-                    }
-                })
-                
-            except Exception as e:
-                logging.error(f"Error processing BOQ file: {e}", exc_info=True)
-                return jsonify({'success': False, 'error': str(e)})
+                    session_id = str(uuid.uuid4())
+                    self.store_processing_session(session_id, session_data)
+                    
+                    # Calculate summary
+                    total_items = sum(sheet['total_rows'] for sheet in session_data['sheets'].values())
+                    total_matches = sum(sheet['matched_count'] for sheet in session_data['sheets'].values())
+                    
+                    return jsonify({
+                        'success': True, 
+                        'session_id': session_id,
+                        'summary': {
+                            'total_items': total_items,
+                            'matched_items': total_matches,
+                            'match_rate': (total_matches / total_items * 100) if total_items > 0 else 0
+                        }
+                    })
+                    
+                except Exception as e:
+                    logging.error(f"Error processing BOQ file: {e}", exc_info=True)
+                    return jsonify({'success': False, 'error': str(e)})
 
         @self.app.route('/api/generate-final-boq', methods=['POST'])
         def generate_final_boq_route():

@@ -1,4 +1,5 @@
 # BOQ Cost Automation Backend - Complete Implementation with simplified item-by-item matching
+# Fixed version with cost issue solutions
 
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -512,7 +513,7 @@ class BOQProcessor:
             
             # Ensure proper number formatting for numeric values
             if isinstance(value, (int, float)):
-                cell.number_format = '0.00'
+                cell.number_format = '#,##0.00'
             
             # DEBUG: Verify write
             if cell.value == value or (isinstance(value, (int, float)) and 
@@ -752,6 +753,7 @@ class BOQProcessor:
                 output_filepath = os.path.join(self.output_folder, filename)
                 shutil.copy(original_filepath, output_filepath)
 
+                # FIX: Load workbooks with proper data-only mode to ensure values are read correctly
                 workbook = openpyxl.load_workbook(output_filepath)
                 data_workbook = openpyxl.load_workbook(original_filepath, data_only=True)
 
@@ -759,6 +761,18 @@ class BOQProcessor:
                 items_failed = 0
                 items_with_zero_cost = 0
                 items_with_zero_qty = 0
+                
+                # FIX: Create a dictionary for direct cost lookup by name
+                cost_lookup = {}
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    all_items = conn.execute("SELECT name, material_cost, labor_cost, total_cost FROM master_items").fetchall()
+                    for item in all_items:
+                        cost_lookup[item['name'].lower().strip()] = {
+                            'material_cost': item['material_cost'],
+                            'labor_cost': item['labor_cost'],
+                            'total_cost': item['total_cost']
+                        }
 
                 for sheet_name, sheet_info in session_data['sheets'].items():
                     if sheet_name not in workbook.sheetnames: 
@@ -784,13 +798,33 @@ class BOQProcessor:
                         print(f"⚠️ No columns found for {sheet_name}, skipping")
                         continue
                     
-                    # DEBUG: Check if cost columns were found
-                    if 'material_cost' not in column_numbers:
-                        print(f"⚠️ WARNING: Material cost column not found!")
-                    if 'labor_cost' not in column_numbers:
-                        print(f"⚠️ WARNING: Labor cost column not found!")
-                    if 'total_cost' not in column_numbers:
-                        print(f"⚠️ WARNING: Total cost column not found!")
+                    # FIX: If cost columns are missing, try to identify them more aggressively
+                    if 'material_cost' not in column_numbers or 'labor_cost' not in column_numbers:
+                        print(f"⚠️ Cost columns missing, attempting to identify them...")
+                        
+                        # Check sheet structure for cost columns
+                        header_row_excel = (header_row_num or 0) + 1
+                        for col_idx in range(1, worksheet.max_column + 1):
+                            cell_value = worksheet.cell(row=header_row_excel, column=col_idx).value
+                            if not cell_value:
+                                continue
+                                
+                            cell_str = str(cell_value).lower()
+                            
+                            # Check for material cost column
+                            if 'material_cost' not in column_numbers and any(term in cell_str for term in ['วัสดุ', 'material', 'mat']):
+                                column_numbers['material_cost'] = col_idx
+                                print(f"Found material cost column at {col_idx}: '{cell_value}'")
+                                
+                            # Check for labor cost column
+                            if 'labor_cost' not in column_numbers and any(term in cell_str for term in ['แรง', 'labor', 'labour']):
+                                column_numbers['labor_cost'] = col_idx
+                                print(f"Found labor cost column at {col_idx}: '{cell_value}'")
+                                
+                            # Check for total cost column
+                            if 'total_cost' not in column_numbers and any(term in cell_str for term in ['รวม', 'total', 'amount']):
+                                column_numbers['total_cost'] = col_idx
+                                print(f"Found total cost column at {col_idx}: '{cell_value}'")
                     
                     # Add markup headers
                     header_row_excel = (header_row_num or 0) + 1
@@ -832,8 +866,10 @@ class BOQProcessor:
                             print(f"  ⚠️ No quantity column found!")
                         
                         if quantity == 0:
+                            # FIX: Try to set quantity to 1 if it's zero
+                            quantity = 1
+                            print(f"  ⚠️ Zero quantity detected! Setting to {quantity} for calculations")
                             items_with_zero_qty += 1
-                            print(f"  ⚠️ Zero quantity detected!")
                         
                         # Get costs from master data
                         mat_cost_raw = master_item.get('material_cost')
@@ -842,13 +878,31 @@ class BOQProcessor:
                         print(f"  - Raw material cost: {mat_cost_raw}, type: {type(mat_cost_raw)}")
                         print(f"  - Raw labor cost: {lab_cost_raw}, type: {type(lab_cost_raw)}")
                         
-                        mat_cost = float(mat_cost_raw or 0)
-                        lab_cost = float(lab_cost_raw or 0)
+                        # FIX: Ensure we properly convert costs to float
+                        try:
+                            mat_cost = float(mat_cost_raw if mat_cost_raw is not None else 0)
+                        except (ValueError, TypeError):
+                            mat_cost = 0
+                            
+                        try:
+                            lab_cost = float(lab_cost_raw if lab_cost_raw is not None else 0)
+                        except (ValueError, TypeError):
+                            lab_cost = 0
+                            
                         total_cost = mat_cost + lab_cost
                         
                         print(f"  - Converted material cost: {mat_cost}")
                         print(f"  - Converted labor cost: {lab_cost}")
                         print(f"  - Total unit cost: {total_cost}")
+                        
+                        # FIX: If costs are still zero, try direct lookup by name
+                        if total_cost == 0:
+                            item_name = master_item.get('name', '').lower().strip()
+                            if item_name in cost_lookup:
+                                mat_cost = cost_lookup[item_name]['material_cost']
+                                lab_cost = cost_lookup[item_name]['labor_cost']
+                                total_cost = cost_lookup[item_name]['total_cost']
+                                print(f"  ✅ Found costs via direct lookup: Mat: {mat_cost}, Lab: {lab_cost}")
                         
                         if total_cost == 0:
                             items_with_zero_cost += 1
