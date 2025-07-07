@@ -327,16 +327,8 @@ class HardCodedBOQProcessor:
                 code = str(row_values[code_idx]) if code_idx < len(row_values) else ''
                 name = str(row_values[name_idx]) if name_idx < len(row_values) else ''
                 
-                # For non-Interior sheets: check if name is "-" and get description from next column
-                # This ensures we store the proper item name in the database from column D
-                if sheet_type in ["EE", "AC", "FP"] and (name == "-" or name.strip() == "-") and name_idx + 1 < len(row_values):
-                    description = str(row_values[name_idx + 1]).strip()
-                    if description and description != "nan" and description != "-":
-                        print(f"  Found description in master sheet: '{description}' for {sheet_type} item with code '{code}'")
-                        name = description  # Use the description as the name
-                
-                # IMPROVED: Clean item name to handle '-' or empty names and non-Interior sheets
-                name = self._clean_item_name(name, code, sheet_type)
+                # IMPROVED: Clean item name to handle '-' or empty names
+                name = self._clean_item_name(name, code)
                 if not name:
                     continue
                 
@@ -409,13 +401,12 @@ class HardCodedBOQProcessor:
         
         return result_df
 
-    def _clean_item_name(self, name, code, sheet_type=None):
-        """Clean and improve item names, especially for '-' values and non-Interior sheets"""
+    def _clean_item_name(self, name, code):
+        """Clean and improve item names, especially for '-' values"""
         if not name or pd.isna(name) or name.strip() in ['-', '', 'nan', 'none']:
             if code and code.strip() and code.strip() not in ['-', 'nan', 'none']:
                 # Use code as name if name is empty/invalid but code exists
-                item_prefix = "" if sheet_type == "INT" else ""  # No prefix for any sheet type
-                return f"{item_prefix}{code.strip()}"
+                return f"Item {code.strip()}"
             else:
                 # Generate a unique name if both name and code are invalid
                 return f"Item_{uuid.uuid4().hex[:6]}"
@@ -424,11 +415,6 @@ class HardCodedBOQProcessor:
         cleaned = name.strip()
         if cleaned == '-':
             return f"Unnamed item {uuid.uuid4().hex[:6]}"
-        
-        # For non-interior sheets, remove "Item " prefix if present
-        if sheet_type and sheet_type != "INT" and cleaned.lower().startswith("item "):
-            cleaned = cleaned[5:].strip()
-            print(f"  Cleaned item name: Removed 'Item ' prefix -> '{cleaned}'")
         
         return cleaned
 
@@ -514,18 +500,7 @@ class HardCodedBOQProcessor:
         if not all_items: 
             return None
         
-        # For non-INT sheets, remove item prefix from search name if present
-        original_name = str(name).strip()
-        sanitized_search = original_name.lower()
-        
-        # Special debug for important info
-        print(f"  🔍 Searching for item: '{original_name}' with code '{code}' in {sheet_type} sheet")
-        
-        # Handle item prefix for non-interior sheets (e.g., "Item B2" -> "B2")
-        if sheet_type != 'INT' and sanitized_search.startswith('item '):
-            sanitized_search = sanitized_search.replace('item ', '', 1)
-            print(f"  Removed 'Item' prefix: '{original_name}' -> '{sanitized_search}'")
-        
+        sanitized_search = str(name).lower().strip()
         sanitized_code = str(code).lower().strip() if code and not pd.isna(code) else ""
         best_match = None
         best_similarity = 0
@@ -533,76 +508,43 @@ class HardCodedBOQProcessor:
         # Special handling for hyphen-only names in non-INT sheet types
         is_hyphen_only = sanitized_search == '-'
         
-        # EXACT MATCHING FIRST - multiple approaches
-        
-        # 1. Exact code+name match
-        for item_row in all_items:
-            item_dict = dict(item_row)
-            item_code = str(item_dict['code']).lower().strip()
-            item_name = str(item_dict['name']).lower().strip()
-            
-            # If we have an exact code and name match, return immediately
-            if item_code == sanitized_code and item_name == sanitized_search:
-                print(f"  ✅ EXACT MATCH found (code+name): {item_code} - {item_name}")
-                return {'item': item_dict, 'similarity': 100}
-        
-        # 2. Exact code match (if code exists)
-        if sanitized_code and sanitized_code != "nan" and sanitized_code != "-":
-            for item_row in all_items:
-                item_dict = dict(item_row)
-                item_code = str(item_dict['code']).lower().strip()
-                
-                if item_code == sanitized_code:
-                    print(f"  ✅ EXACT CODE MATCH found: {item_code}")
-                    return {'item': item_dict, 'similarity': 95}
-        
-        # 3. Exact name match
-        for item_row in all_items:
-            item_dict = dict(item_row)
-            item_name = str(item_dict['name']).lower().strip()
-            
-            if item_name == sanitized_search:
-                print(f"  ✅ EXACT NAME MATCH found: {item_name}")
-                return {'item': item_dict, 'similarity': 90}
-        
-        # FUZZY MATCHING (only if exact matching fails)
-        
-        # Special handling for hyphen-only names in non-INT sheet types
-        if is_hyphen_only and sheet_type != 'INT':
-            for item_row in all_items:
-                item_dict = dict(item_row)
-                item_code = str(item_dict['code']).lower().strip()
-                
-                # For hyphen-only names, prioritize code matching heavily
-                if sanitized_code and (item_code.startswith(sanitized_code) or sanitized_code.startswith(item_code)):
-                    # Partial code match for hyphen-only items
-                    code_similarity = 75
-                    if code_similarity > best_similarity:
-                        best_similarity = code_similarity
-                        best_match = {'item': item_dict, 'similarity': code_similarity}
-        
-        # Code match with similarity boost
+        # First try exact match with code + name for duplicate handling
         if sanitized_code:
             for item_row in all_items:
                 item_dict = dict(item_row)
                 item_code = str(item_dict['code']).lower().strip()
                 item_name = str(item_dict['name']).lower().strip()
                 
-                # Partial code match with boost
-                if (item_code.startswith(sanitized_code) or sanitized_code.startswith(item_code)):
+                # If we have an exact code and name match, return immediately
+                if item_code == sanitized_code and item_name == sanitized_search:
+                    return {'item': item_dict, 'similarity': 100}
+                
+                # For hyphen-only names, prioritize code matching heavily
+                if is_hyphen_only and sheet_type != 'INT':
+                    if item_code == sanitized_code:
+                        # When name is just "-", the code match is the most important
+                        return {'item': item_dict, 'similarity': 95}
+                    elif item_code.startswith(sanitized_code) or sanitized_code.startswith(item_code):
+                        # Partial code match for hyphen-only items
+                        code_similarity = 75
+                        if code_similarity > best_similarity:
+                            best_similarity = code_similarity
+                            best_match = {'item': item_dict, 'similarity': code_similarity}
+                # Standard code match with boost
+                elif item_code == sanitized_code:
                     name_similarity = fuzz.ratio(sanitized_search, item_name)
                     # Boost similarity for code match
-                    adjusted_similarity = min(100, name_similarity + 20)
+                    adjusted_similarity = min(100, name_similarity + 25)
                     
                     if adjusted_similarity > best_similarity:
                         best_similarity = adjusted_similarity
                         best_match = {'item': item_dict, 'similarity': adjusted_similarity}
         
-        # Finally, fuzzy name matching
+        # Then do standard fuzzy matching on name
         for item_row in all_items:
             item_dict = dict(item_row)
-            item_name = str(item_dict['name']).lower().strip()
-            similarity = fuzz.ratio(sanitized_search, item_name)
+            sanitized_candidate = str(item_dict['name']).lower().strip()
+            similarity = fuzz.ratio(sanitized_search, sanitized_candidate)
             
             if similarity > best_similarity:
                 best_similarity = similarity
@@ -701,28 +643,8 @@ class HardCodedBOQProcessor:
                             if name_col >= len(row):
                                 continue
                                 
-                            # Get the basic name and code
                             name = str(row.iloc[name_col]).strip()
                             code = str(row.iloc[code_col]).strip() if code_col < len(row) else ""
-                            
-                            # Special handling for non-Interior sheets with dash (-) and description
-                            # Format in these sheets is typically:
-                            # Column C (name): dash (-) 
-                            # Column D (next column): actual item description
-                            if sheet_type in ["EE", "AC", "FP"] and (name == "-" or name.strip() == "-"):
-                                # For EE, AC, FP sheets, *always* check the next column for description
-                                # This is specifically for the format we see in the sample where dash is in col C and description in col D
-                                next_col_idx = name_col + 1
-                                if next_col_idx < len(row):
-                                    description = str(row.iloc[next_col_idx]).strip()
-                                    if description and description != "nan" and description != "-":
-                                        print(f"  Found description in next column: '{description}' in {sheet_type} sheet")
-                                        name = description  # Use the description as the name
-                                        
-                                # If no description found or next column doesn't exist, we'll use the code as fallback
-                                if name == "-" and code and code.strip():
-                                    print(f"  Using code '{code}' for dash item with no description in {sheet_type} sheet")
-                                    name = code
                             
                             # Clean up name for comparison
                             clean_name = name.strip()
@@ -732,12 +654,6 @@ class HardCodedBOQProcessor:
                                 clean_name.lower() in ['nan', 'none', ''] or 
                                 any(keyword in clean_name.lower() for keyword in ['total', 'รวม', 'system', 'ระบบ'])):
                                 continue
-                            
-                            # For non-interior sheets, handle item prefix
-                            if sheet_type != "INT" and clean_name.lower().startswith("item "):
-                                original_name = clean_name
-                                clean_name = clean_name[5:].strip()  # Remove "Item " prefix
-                                print(f"  Processed non-interior item: '{original_name}' -> '{clean_name}'")
                                 
                             # Special handling for "-" in non-interior sheets
                             if clean_name == "-" and sheet_type != "INT":
@@ -747,9 +663,7 @@ class HardCodedBOQProcessor:
                                     # We'll proceed with matching using code
                             
                             # Find match in database using improved matching with code+name
-                            # Use the cleaned name (without "Item " prefix) for non-interior sheets
-                            search_name = clean_name if sheet_type != "INT" and clean_name.lower() != name.lower() else name
-                            match = self.find_best_match(search_name, code, sheet_type)
+                            match = self.find_best_match(name, code, sheet_type)
                             
                             if match and match['similarity'] >= 50:
                                 processed_items.append({
