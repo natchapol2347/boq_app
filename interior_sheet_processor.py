@@ -74,20 +74,10 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             code_text = str(code_cell).strip() if code_cell else ""
             name_text = str(name_cell).strip() if name_cell else ""
             
-            # Look for 'Total' in either column
-            is_total_row = False
-            section_id = None
-            
+            # Look for 'Total' in code column
             if code_text.lower() == 'total':
-                is_total_row = True
-                section_id = self._find_section_title_for_total(worksheet, row_idx, name_col)
-            elif name_text.lower() == 'total':
-                is_total_row = True
-                section_id = self._find_section_title_for_total(worksheet, row_idx, name_col)
-            
-            if is_total_row:
-                if not section_id:
-                    section_id = f"SECTION_{row_idx}"
+                # Section name is right there in the name column!
+                section_id = self._find_section_title_for_total(worksheet, row_idx, name_text)
                 
                 sections[section_id] = {
                     'total_row': row_idx,
@@ -110,53 +100,43 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             }
         
         return sections
+
+    def _find_section_title_for_total(self, worksheet, total_row: int, section_name_from_total: str) -> str:
+        """
+        Find the section title for a total row using two methods:
+        1. Search upward for code that matches the section name from total row
+        2. Find previous total row, section header = previous_total + 1
+        """
+        code_col = self.column_mapping['code']
+        
+        # METHOD 1: Search upward for matching code
+        # Total row has: Code="Total", Name="งานป้าย"
+        # Look for: Code="งานป้าย" (section header)
+        if section_name_from_total:
+            for i in range(total_row - 1, max(1, total_row - 50), -1):
+                code_cell = worksheet.cell(row=i, column=code_col).value
+                code_text = str(code_cell).strip() if code_cell else ""
+                
+                if code_text == section_name_from_total:
+                    return section_name_from_total
+        
+        # METHOD 2: Find previous total, section header = previous_total + 1
+        for i in range(total_row - 1, max(1, total_row - 100), -1):
+            check_code_cell = worksheet.cell(row=i, column=code_col).value
+            check_code_text = str(check_code_cell).strip() if check_code_cell else ""
+            
+            # Found another total row
+            if check_code_text.lower() == 'total':
+                section_header_row = i + 1
+                code_cell = worksheet.cell(row=section_header_row, column=code_col).value
+                section_code = str(code_cell).strip() if code_cell else ""
+                if section_code:
+                    return section_code
+        # FALLBACK: Use the name from total row or generate default
+        return section_name_from_total
+
     
-    def _find_section_title_for_total(self, worksheet, total_row: int, name_col: int) -> str:
-        """Find the section title for a total row by looking upward"""
-        # Look for a section header above the total row
-        for i in range(total_row - 1, max(1, total_row - 20), -1):
-            cell_value = worksheet.cell(row=i, column=name_col).value
-            if not cell_value:
-                continue
-            
-            cell_text = str(cell_value).strip()
-            
-            # Skip if it's another total row
-            if 'total' in cell_text.lower() or 'รวม' in cell_text.lower():
-                continue
-            
-            # Check if this looks like a section header
-            if self._is_section_header(cell_text, worksheet, i):
-                return cell_text
-        
-        return f"SECTION_{total_row}"
-    
-    def _is_section_header(self, text: str, worksheet, row: int) -> bool:
-        """Determine if a text looks like a section header"""
-        # Section headers are typically:
-        # - All caps or title case
-        # - Don't contain hyphens (items usually do)
-        # - Don't have numeric values in other columns
-        
-        if len(text) < 3:
-            return False
-        
-        if '-' in text and not text.isupper():
-            return False
-        
-        # Check if row has numeric values (items usually do, headers don't)
-        has_numbers = False
-        for col in range(1, worksheet.max_column + 1):
-            try:
-                val = worksheet.cell(row=row, column=col).value
-                if isinstance(val, (int, float)) and val > 0:
-                    has_numbers = True
-                    break
-            except:
-                pass
-        
-        # Headers typically don't have numbers
-        return not has_numbers
+ 
     
     def write_markup_costs(self, worksheet, row: int, base_cost: float, markup_options: List[int], start_col: int) -> None:
         """Write markup costs for interior items"""
