@@ -4,7 +4,7 @@ Interior sheet processor - handles interior construction sheets.
 These sheets typically have a simpler structure with material and labor costs.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import re
 from base_sheet_processor import BaseSheetProcessor
 
@@ -58,7 +58,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
     
     def find_section_boundaries(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
         """
-        Find section boundaries for interior sheets.
+        Find section boundaries for interior sheets and calculate totals using range-based approach.
         Interior sheets often have simple 'Total' rows marking sections.
         """
         sections = {}
@@ -67,7 +67,6 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         
         # Scan for total rows
         for row_idx in range(1, max_row + 1):
-            # Check both code and name columns for 'Total'
             code_cell = worksheet.cell(row=row_idx, column=code_col).value
             name_cell = worksheet.cell(row=row_idx, column=name_col).value
             
@@ -76,36 +75,48 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             
             # Look for 'Total' in code column
             if code_text.lower() == 'total':
-                # Section name is right there in the name column!
-                section_id = self._find_section_title_for_total(worksheet, row_idx, name_text)
+                # Get section info (ID and start row)
+                section_id, section_start_row = self._find_section_info(worksheet, row_idx, name_text)
+                
+                # Calculate section totals using range-based approach
+                section_totals = self._calculate_section_totals_from_range(
+                    worksheet, section_start_row, row_idx - 1
+                )
                 
                 sections[section_id] = {
                     'total_row': row_idx,
-                    'material_total': 0,
-                    'labor_total': 0,
-                    'total_cost': 0,
-                    'item_rows': []
+                    'start_row': section_start_row,
+                    'end_row': row_idx - 1,
+                    'material_total': section_totals['material_total'],
+                    'labor_total': section_totals['labor_total'],
+                    'total_cost': section_totals['total_cost'],
+                    'item_count': section_totals['item_count']
                 }
                 
-                self.logger.info(f"Found interior total row for section '{section_id}' at row {row_idx}")
+                self.logger.info(f"Found interior section '{section_id}' (rows {section_start_row}-{row_idx-1}) "
+                               f"with {section_totals['item_count']} items, total cost: {section_totals['total_cost']}")
         
         # If no sections found, create a default main section
         if not sections:
             sections['MAIN_SECTION'] = {
                 'total_row': None,
+                'start_row': 1,
+                'end_row': max_row,
                 'material_total': 0,
                 'labor_total': 0,
                 'total_cost': 0,
-                'item_rows': []
+                'item_count': 0
             }
         
         return sections
-
-    def _find_section_title_for_total(self, worksheet, total_row: int, section_name_from_total: str) -> str:
+    
+    def _find_section_info(self, worksheet, total_row: int, section_name_from_total: str) -> Tuple[str, int]:
         """
-        Find the section title for a total row using two methods:
+        Find the section ID and start row for a total row using two methods:
         1. Search upward for code that matches the section name from total row
         2. Find previous total row, section header = previous_total + 1
+        
+        Returns: (section_id, section_start_row)
         """
         code_col = self.column_mapping['code']
         
@@ -118,7 +129,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 code_text = str(code_cell).strip() if code_cell else ""
                 
                 if code_text == section_name_from_total:
-                    return section_name_from_total
+                    return section_name_from_total, i + 1  # (section_id, start_row after header)
         
         # METHOD 2: Find previous total, section header = previous_total + 1
         for i in range(total_row - 1, max(1, total_row - 100), -1):
@@ -131,12 +142,115 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 code_cell = worksheet.cell(row=section_header_row, column=code_col).value
                 section_code = str(code_cell).strip() if code_cell else ""
                 if section_code:
-                    return section_code
-        # FALLBACK: Use the name from total row or generate default
-        return section_name_from_total
-
+                    return section_code, section_header_row + 1  # (section_id, start_row after header)
+        
+        # FALLBACK: Use the name from total row and estimate start
+        fallback_start = max(1, total_row - 20)
+        return section_name_from_total or f"FALLBACK{total_row}", fallback_start
     
- 
+    def _calculate_section_totals_from_range(self, worksheet, start_row: int, end_row: int) -> Dict[str, float]:
+        """
+        Calculate section totals by iterating through the range and summing up all item costs.
+        This is more reliable than accumulation-based approach.
+        """
+        material_total = 0.0
+        labor_total = 0.0
+        total_cost = 0.0
+        item_count = 0
+        
+        # Get column positions
+        mat_col = self.column_mapping['material_cost']
+        lab_col = self.column_mapping['labor_cost']
+        total_col = self.column_mapping['total_cost']
+        code_col = self.column_mapping['code']
+        
+        self.logger.debug(f"Calculating totals for range {start_row}-{end_row}")
+        
+        # Sum up all items in the section range
+        for row in range(start_row, end_row + 1):
+            # Skip if this looks like a header or empty row
+            code_cell = worksheet.cell(row=row, column=code_col).value
+            code_text = str(code_cell).strip() if code_cell else ""
+            
+            # Skip section headers and empty rows
+            if not code_text or code_text.lower() in ['total', '']:
+                continue
+            
+            # Get costs from each row
+            mat_cell = worksheet.cell(row=row, column=mat_col).value
+            lab_cell = worksheet.cell(row=row, column=lab_col).value
+            total_cell = worksheet.cell(row=row, column=total_col).value
+            
+            # Convert to float safely
+            mat_cost = self._safe_float(mat_cell)
+            lab_cost = self._safe_float(lab_cell)
+            row_total = self._safe_float(total_cell)
+            
+            # Only add if this row has actual costs (not header or empty rows)
+            if mat_cost > 0 or lab_cost > 0 or row_total > 0:
+                material_total += mat_cost
+                labor_total += lab_cost
+                total_cost += row_total
+                item_count += 1
+                
+                self.logger.debug(f"Row {row} ({code_text}): Mat={mat_cost}, Lab={lab_cost}, Total={row_total}")
+        
+        return {
+            'material_total': material_total,
+            'labor_total': labor_total,
+            'total_cost': total_cost,
+            'item_count': item_count
+        }
+    
+    def _safe_float(self, value) -> float:
+        """Safely convert value to float"""
+        try:
+            if value is None or value == '' or value == '-':
+                return 0.0
+            return float(value)
+        except (ValueError, TypeError):
+            return 0.0
+    
+    def write_section_totals(self, worksheet, sections: Dict[str, Dict[str, Any]], 
+                           markup_options: List[int], start_markup_col: int) -> None:
+        """
+        Write pre-calculated section totals to worksheet.
+        Totals are already calculated in find_section_boundaries using range-based approach.
+        """
+        for section_id, section_data in sections.items():
+            total_row = section_data.get('total_row')
+            if not total_row:
+                continue
+            
+            self.logger.info(f"Writing pre-calculated totals for '{section_id}' at row {total_row}")
+            
+            # Get pre-calculated totals
+            material_total = section_data['material_total']
+            labor_total = section_data['labor_total']
+            total_cost = section_data['total_cost']
+            item_count = section_data['item_count']
+            
+            self.logger.info(f"Section '{section_id}': {item_count} items, "
+                           f"Material={material_total}, Labor={labor_total}, Total={total_cost}")
+            
+            # Write basic totals
+            mat_col = self.column_mapping['material_cost']
+            lab_col = self.column_mapping['labor_cost']
+            total_col = self.column_mapping['total_cost']
+            
+            try:
+                worksheet.cell(row=total_row, column=mat_col).value = material_total
+                worksheet.cell(row=total_row, column=lab_col).value = labor_total
+                worksheet.cell(row=total_row, column=total_col).value = total_cost
+                
+                # Write markup totals
+                self.write_markup_costs(worksheet, total_row, total_cost, 
+                                      markup_options, start_markup_col)
+                
+                self.logger.info(f"Section '{section_id}' totals written successfully")
+                
+            except Exception as e:
+                self.logger.error(f"Error writing section totals for '{section_id}': {e}")
     
     def write_markup_costs(self, worksheet, row: int, base_cost: float, markup_options: List[int], start_col: int) -> None:
         """Write markup costs for interior items"""
@@ -151,77 +265,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             except Exception as e:
                 self.logger.error(f"Error writing markup to ({row}, {col_num}): {e}")
     
-    def assign_item_to_section(self, item_row: int, sections: Dict[str, Dict[str, Any]]) -> str:
-        """Assign an item to the appropriate section"""
-        # For interior sheets, find the next total row below this item
-        closest_section = None
-        closest_total_row = float('inf')
-        
-        for section_id, section_data in sections.items():
-            total_row = section_data.get('total_row')
-            if total_row and item_row < total_row < closest_total_row:
-                closest_total_row = total_row
-                closest_section = section_id
-        
-        # If no section found, use main section
-        if not closest_section:
-            if 'MAIN_SECTION' not in sections:
-                sections['MAIN_SECTION'] = {
-                    'total_row': None,
-                    'material_total': 0,
-                    'labor_total': 0,
-                    'total_cost': 0,
-                    'item_rows': []
-                }
-            closest_section = 'MAIN_SECTION'
-        
-        return closest_section
     
-    def update_section_totals(self, sections: Dict[str, Dict[str, Any]], 
-                            section_id: str, costs: Dict[str, float], item_row: int) -> None:
-        """Update section totals with item costs"""
-        if section_id not in sections:
-            return
-        
-        section = sections[section_id]
-        section['material_total'] += costs['material_total']
-        section['labor_total'] += costs['labor_total']
-        section['total_cost'] += costs['total_cost']
-        section['item_rows'].append(item_row)
-        
-        self.logger.debug(f"Updated section '{section_id}' totals: "
-                         f"Material={section['material_total']}, "
-                         f"Labor={section['labor_total']}, "
-                         f"Total={section['total_cost']}")
-    
-    def write_section_totals(self, worksheet, sections: Dict[str, Dict[str, Any]], 
-                           markup_options: List[int], start_markup_col: int) -> None:
-        """Write section totals to worksheet"""
-        for section_id, section_data in sections.items():
-            total_row = section_data.get('total_row')
-            if not total_row:
-                continue
-            
-            self.logger.info(f"Writing section totals for '{section_id}' at row {total_row}")
-            
-            # Write basic totals
-            mat_col = self.column_mapping['material_cost']
-            lab_col = self.column_mapping['labor_cost']
-            total_col = self.column_mapping['total_cost']
-            
-            try:
-                worksheet.cell(row=total_row, column=mat_col).value = section_data['material_total']
-                worksheet.cell(row=total_row, column=lab_col).value = section_data['labor_total']
-                worksheet.cell(row=total_row, column=total_col).value = section_data['total_cost']
-                
-                # Write markup totals
-                self.write_markup_costs(worksheet, total_row, section_data['total_cost'], 
-                                      markup_options, start_markup_col)
-                
-                self.logger.info(f"Section '{section_id}' totals written successfully")
-                
-            except Exception as e:
-                self.logger.error(f"Error writing section totals for '{section_id}': {e}")
     
     def add_sample_data(self) -> None:
         """Add sample data for interior items"""

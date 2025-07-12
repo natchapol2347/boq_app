@@ -2,12 +2,12 @@
 """
 Refactored BOQ Processor - Main application class that orchestrates all sheet processors.
 This is the main entry point that uses the specialized sheet processors.
+CLEANED VERSION - Removed redundant/unused code.
 """
 
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import pandas as pd
-import numpy as np
 import os
 import uuid
 from datetime import datetime
@@ -329,9 +329,9 @@ class RefactoredBOQProcessor:
             return jsonify({'error': 'File not found'}), 404
     
     def _process_sheet_costs(self, worksheet, data_worksheet, processor, sheet_info: Dict[str, Any], markup_options: List[int]) -> Dict[str, Any]:
-        """Process costs for a single sheet using its specific processor"""
+        """Process costs for a single sheet using its specific processor with range-based approach"""
         try:
-            # Find section boundaries
+            # Find section boundaries (now includes pre-calculated totals)
             sections = processor.find_section_boundaries(worksheet, worksheet.max_row)
             
             # Add markup headers
@@ -341,7 +341,7 @@ class RefactoredBOQProcessor:
                 cell = worksheet.cell(row=header_row_excel, column=start_markup_col + i)
                 cell.value = f'Markup {markup_percent}%'
             
-            # Process each matched item
+            # Process each matched item (write individual item costs)
             items_processed = 0
             items_failed = 0
             
@@ -367,7 +367,7 @@ class RefactoredBOQProcessor:
                     # Write costs to worksheet
                     success = self._write_item_costs(worksheet, target_row_excel, processor, costs)
                     
-                    # Write markup costs
+                    # Write markup costs for individual items
                     processor.write_markup_costs(
                         worksheet, 
                         target_row_excel, 
@@ -375,10 +375,6 @@ class RefactoredBOQProcessor:
                         markup_options, 
                         start_markup_col
                     )
-                    
-                    # Assign item to section and update totals
-                    section_id = processor.assign_item_to_section(target_row_excel, sections)
-                    processor.update_section_totals(sections, section_id, costs, target_row_excel)
                     
                     if success:
                         items_processed += 1
@@ -389,7 +385,7 @@ class RefactoredBOQProcessor:
                     logging.error(f"Error processing item at row {original_row_index}: {e}")
                     items_failed += 1
             
-            # Write section totals
+            # Write section totals (now using pre-calculated values from find_section_boundaries)
             processor.write_section_totals(worksheet, sections, markup_options, start_markup_col)
             
             return {

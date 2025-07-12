@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Fire Protection sheet processor - handles fire protection system sheets.
-These sheets have specific safety-related patterns and calculation methods.
+Updated to match new abstract methods and range-based approach.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import re
 from base_sheet_processor import BaseSheetProcessor
 
@@ -58,22 +58,14 @@ class FPSheetProcessor(BaseSheetProcessor):
     
     def find_section_boundaries(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
         """
-        Find section boundaries for fire protection sheets.
+        Find section boundaries for fire protection sheets and calculate totals using range-based approach.
         FP sheets often have sections like 'FIRE ALARM', 'SPRINKLER', 'EXTINGUISHER', etc.
         """
         sections = {}
         name_col = self.column_mapping['name']
         code_col = self.column_mapping['code']
         
-        # Common fire protection section headers
-        fp_sections = [
-            'FIRE ALARM', 'SPRINKLER', 'EXTINGUISHER', 'FIRE PUMP', 
-            'FIRE HOSE', 'FIRE CABINET', 'SMOKE DETECTOR', 'FIRE PROTECTION'
-        ]
-        
-        current_section = None
-        
-        # Scan for section headers and total rows
+        # Scan for total rows
         for row_idx in range(1, max_row + 1):
             code_cell = worksheet.cell(row=row_idx, column=code_col).value
             name_cell = worksheet.cell(row=row_idx, column=name_col).value
@@ -81,103 +73,155 @@ class FPSheetProcessor(BaseSheetProcessor):
             code_text = str(code_cell).strip() if code_cell else ""
             name_text = str(name_cell).strip() if name_cell else ""
             
-            # Check for section headers
-            if self._is_fp_section_header(name_text, fp_sections):
-                current_section = name_text
-                sections[current_section] = {
-                    'start_row': row_idx,
-                    'total_row': None,
-                    'material_total': 0,
-                    'labor_total': 0,
-                    'total_cost': 0,
-                    'item_rows': []
+            # Look for FP total patterns
+            if (code_text.lower() == 'total' or 
+                self._is_fp_total_row(code_text, name_text)):
+                
+                # Get section info (ID and start row)
+                section_id, section_start_row = self._find_section_info(worksheet, row_idx, name_text)
+                
+                # Calculate section totals using range-based approach
+                section_totals = self._calculate_section_totals_from_range(
+                    worksheet, section_start_row, row_idx - 1
+                )
+                
+                sections[section_id] = {
+                    'total_row': row_idx,
+                    'start_row': section_start_row,
+                    'end_row': row_idx - 1,
+                    'material_total': section_totals['material_total'],
+                    'labor_total': section_totals['labor_total'],
+                    'total_cost': section_totals['total_cost'],
+                    'item_count': section_totals['item_count']
                 }
-                self.logger.info(f"Found FP section '{current_section}' at row {row_idx}")
-            
-            # Check for total rows
-            elif self._is_fp_total_row(code_text, name_text):
-                section_id = self._identify_fp_section(code_text, name_text, current_section)
                 
-                if section_id not in sections:
-                    sections[section_id] = {
-                        'start_row': None,
-                        'total_row': row_idx,
-                        'material_total': 0,
-                        'labor_total': 0,
-                        'total_cost': 0,
-                        'item_rows': []
-                    }
-                else:
-                    sections[section_id]['total_row'] = row_idx
-                
-                self.logger.info(f"Found FP total row for '{section_id}' at row {row_idx}")
+                self.logger.info(f"Found FP section '{section_id}' (rows {section_start_row}-{row_idx-1}) "
+                               f"with {section_totals['item_count']} items, total cost: {section_totals['total_cost']}")
         
         # If no sections found, create a default main section
         if not sections:
             sections['MAIN_FP'] = {
-                'start_row': None,
                 'total_row': None,
+                'start_row': 1,
+                'end_row': max_row,
                 'material_total': 0,
                 'labor_total': 0,
                 'total_cost': 0,
-                'item_rows': []
+                'item_count': 0
             }
         
         return sections
     
-    def _is_fp_section_header(self, text: str, section_keywords: List[str]) -> bool:
-        """Check if text is a fire protection section header"""
-        if not text or len(text) < 3:
-            return False
+    def _find_section_info(self, worksheet, total_row: int, section_name_from_total: str) -> Tuple[str, int]:
+        """Find the section ID and start row for FP sheets"""
+        code_col = self.column_mapping['code']
+        name_col = self.column_mapping['name']
         
-        text_upper = text.upper()
+        # METHOD 1: Search upward for matching code (fire protection sections)
+        if section_name_from_total:
+            for i in range(total_row - 1, max(1, total_row - 50), -1):
+                code_cell = worksheet.cell(row=i, column=code_col).value
+                code_text = str(code_cell).strip() if code_cell else ""
+                
+                if code_text == section_name_from_total:
+                    return section_name_from_total, i + 1
         
-        # Check for exact matches or partial matches with FP keywords
-        for keyword in section_keywords:
-            if keyword in text_upper:
-                return True
+        # METHOD 2: Find previous total, section header = previous_total + 1
+        for i in range(total_row - 1, max(1, total_row - 100), -1):
+            code_cell = worksheet.cell(row=i, column=code_col).value
+            name_cell = worksheet.cell(row=i, column=name_col).value
+            
+            code_text = str(code_cell).strip() if code_cell else ""
+            name_text = str(name_cell).strip() if name_cell else ""
+            
+            # Found another total row
+            if (code_text.lower() == 'total' or 
+                self._is_fp_total_row(code_text, name_text)):
+                section_header_row = i + 1
+                code_cell = worksheet.cell(row=section_header_row, column=code_col).value
+                section_code = str(code_cell).strip() if code_cell else ""
+                if section_code:
+                    return section_code, section_header_row + 1
         
-        # Check for fire-related terms
-        fire_terms = ['FIRE', 'SMOKE', 'ALARM', 'SPRINKLER', 'EXTINGUISHER']
-        for term in fire_terms:
-            if term in text_upper:
-                return True
-        
-        # Check if it's all caps (likely a header)
-        if text.isupper() and len(text) > 5:
-            return True
-        
-        return False
+        # FALLBACK: Use FP section naming
+        fallback_start = max(1, total_row - 20)
+        return section_name_from_total or f"FP_{total_row}", fallback_start
     
     def _is_fp_total_row(self, code_text: str, name_text: str) -> bool:
         """Check if row is a fire protection total row"""
         combined_text = f"{code_text} {name_text}".lower()
         
-        # Look for total indicators
-        total_indicators = ['total', 'รวม', 'รวมรายการ', 'subtotal', 'sum']
+        # Look for FP-specific total indicators
+        fp_total_indicators = [
+            'total', 'รวม', 'รวมรายการ', 'subtotal', 'sum',
+            'fire total', 'fp total', 'fire protection total'
+        ]
         
-        for indicator in total_indicators:
-            if indicator in combined_text:
-                return True
-        
-        return False
+        return any(indicator in combined_text for indicator in fp_total_indicators)
     
-    def _identify_fp_section(self, code_text: str, name_text: str, current_section: str) -> str:
-        """Identify which section a total row belongs to"""
-        combined_text = f"{code_text} {name_text}".lower()
+    def _calculate_section_totals_from_range(self, worksheet, start_row: int, end_row: int) -> Dict[str, float]:
+        """Calculate section totals for fire protection items"""
+        material_total = 0.0
+        labor_total = 0.0
+        total_cost = 0.0
+        item_count = 0
         
-        # Try to extract section name from total text
-        if 'total' in combined_text:
-            # Look for patterns like "Total FIRE ALARM" or "FIRE ALARM Total"
-            for section_name in ['fire alarm', 'sprinkler', 'extinguisher', 'fire pump', 'fire hose']:
-                if section_name in combined_text:
-                    return section_name.upper().replace(' ', '_')
+        # Get column positions
+        mat_col = self.column_mapping['material_cost']
+        lab_col = self.column_mapping['labor_cost']
+        total_col = self.column_mapping['total_cost']
+        code_col = self.column_mapping['code']
         
-        # If we can't identify the section, use current section or default
-        if current_section:
-            return current_section.upper().replace(' ', '_')
+        self.logger.debug(f"Calculating FP totals for range {start_row}-{end_row}")
         
-        return 'MAIN_FP'
+        # Sum up all items in the section range
+        for row in range(start_row, end_row + 1):
+            # Skip headers and empty rows
+            code_cell = worksheet.cell(row=row, column=code_col).value
+            code_text = str(code_cell).strip() if code_cell else ""
+            
+            # Skip section headers, empty rows, and FP system headers
+            if (not code_text or 
+                code_text.lower() in ['total', 'fire', 'fp', 'fire protection'] or
+                self._is_fp_section_header(code_text)):
+                continue
+            
+            # Get costs from each row
+            mat_cell = worksheet.cell(row=row, column=mat_col).value
+            lab_cell = worksheet.cell(row=row, column=lab_col).value
+            total_cell = worksheet.cell(row=row, column=total_col).value
+            
+            # Convert to float safely
+            mat_cost = self._safe_float(mat_cell)
+            lab_cost = self._safe_float(lab_cell)
+            row_total = self._safe_float(total_cell)
+            
+            # Only add if this row has actual costs
+            if mat_cost > 0 or lab_cost > 0 or row_total > 0:
+                material_total += mat_cost
+                labor_total += lab_cost
+                total_cost += row_total
+                item_count += 1
+                
+                self.logger.debug(f"Row {row} ({code_text}): Mat={mat_cost}, Lab={lab_cost}, Total={row_total}")
+        
+        return {
+            'material_total': material_total,
+            'labor_total': labor_total,
+            'total_cost': total_cost,
+            'item_count': item_count
+        }
+    
+    def _is_fp_section_header(self, code_text: str) -> bool:
+        """Check if code looks like a fire protection section header"""
+        fp_headers = [
+            'fire alarm', 'sprinkler', 'extinguisher', 'fire pump', 
+            'fire hose', 'fire cabinet', 'smoke detector', 'fire protection',
+            'manual pull', 'heat detector'
+        ]
+        
+        code_lower = code_text.lower()
+        return any(header in code_lower for header in fp_headers)
     
     def write_markup_costs(self, worksheet, row: int, base_cost: float, markup_options: List[int], start_col: int) -> None:
         """Write markup costs for fire protection items"""
@@ -191,104 +235,6 @@ class FPSheetProcessor(BaseSheetProcessor):
                 self.logger.debug(f"Wrote FP markup {markup_percent}% = {markup_cost} to ({row}, {col_num})")
             except Exception as e:
                 self.logger.error(f"Error writing FP markup to ({row}, {col_num}): {e}")
-    
-    def assign_item_to_section(self, item_row: int, sections: Dict[str, Dict[str, Any]]) -> str:
-        """Assign a fire protection item to the appropriate section"""
-        # Find the section that contains this item
-        best_section = None
-        
-        for section_id, section_data in sections.items():
-            start_row = section_data.get('start_row')
-            total_row = section_data.get('total_row')
-            
-            # Item belongs to section if it's between start and total rows
-            if start_row and total_row:
-                if start_row < item_row < total_row:
-                    best_section = section_id
-                    break
-            elif start_row and item_row > start_row:
-                # No total row defined, but item is after start
-                best_section = section_id
-            elif total_row and item_row < total_row:
-                # No start row defined, but item is before total
-                best_section = section_id
-        
-        # If no section found, use main FP section
-        if not best_section:
-            if 'MAIN_FP' not in sections:
-                sections['MAIN_FP'] = {
-                    'start_row': None,
-                    'total_row': None,
-                    'material_total': 0,
-                    'labor_total': 0,
-                    'total_cost': 0,
-                    'item_rows': []
-                }
-            best_section = 'MAIN_FP'
-        
-        return best_section
-    
-    def update_section_totals(self, sections: Dict[str, Dict[str, Any]], 
-                            section_id: str, costs: Dict[str, float], item_row: int) -> None:
-        """Update section totals with item costs"""
-        if section_id not in sections:
-            return
-        
-        section = sections[section_id]
-        section['material_total'] += costs['material_total']
-        section['labor_total'] += costs['labor_total']
-        section['total_cost'] += costs['total_cost']
-        section['item_rows'].append(item_row)
-        
-        self.logger.debug(f"Updated FP section '{section_id}' totals: "
-                         f"Material={section['material_total']}, "
-                         f"Labor={section['labor_total']}, "
-                         f"Total={section['total_cost']}")
-    
-    def write_section_totals(self, worksheet, sections: Dict[str, Dict[str, Any]], 
-                           markup_options: List[int], start_markup_col: int) -> None:
-        """Write section totals to worksheet"""
-        for section_id, section_data in sections.items():
-            total_row = section_data.get('total_row')
-            if not total_row:
-                continue
-            
-            self.logger.info(f"Writing FP section totals for '{section_id}' at row {total_row}")
-            
-            # Write basic totals
-            mat_col = self.column_mapping['material_cost']
-            lab_col = self.column_mapping['labor_cost']
-            total_col = self.column_mapping['total_cost']
-            
-            try:
-                worksheet.cell(row=total_row, column=mat_col).value = section_data['material_total']
-                worksheet.cell(row=total_row, column=lab_col).value = section_data['labor_total']
-                worksheet.cell(row=total_row, column=total_col).value = section_data['total_cost']
-                
-                # Write markup totals
-                self.write_markup_costs(worksheet, total_row, section_data['total_cost'], 
-                                      markup_options, start_markup_col)
-                
-                self.logger.info(f"FP section '{section_id}' totals written successfully")
-                
-            except Exception as e:
-                self.logger.error(f"Error writing FP section totals for '{section_id}': {e}")
-    
-    def _should_skip_boq_row(self, name: str) -> bool:
-        """Check if BOQ row should be skipped - FP specific"""
-        clean_name = name.strip()
-        
-        # Base skip conditions
-        if super()._should_skip_boq_row(name):
-            return True
-        
-        # FP-specific skip conditions
-        fp_skip_keywords = ['fire protection system', 'fp system', 'fire safety']
-        
-        if any(keyword in clean_name.lower() for keyword in fp_skip_keywords):
-            return True
-        
-        return False
     
     def add_sample_data(self) -> None:
         """Add sample data for fire protection items"""
