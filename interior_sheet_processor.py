@@ -26,9 +26,11 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             'name': 3,          # Column C
             'quantity': 4,      # Column D
             'unit': 5,          # Column E
-            'material_cost': 6, # Column F
-            'labor_cost': 7,    # Column G
-            'total_cost': 8     # Column H
+            'material_unit_cost': 6, # Column F
+            'labor_unit_cost': 7,    # Column G
+            'total_unit_cost': 8,    # Column H
+            "total_cost": 9 #Column I
+
         }
     
     @property
@@ -43,16 +45,18 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         mat_cost = float(master_item.get('material_cost', 0))
         lab_cost = float(master_item.get('labor_cost', 0))
         
-        # Interior calculation: material * quantity + labor (fixed)
-        material_total = mat_cost * quantity
-        labor_total = lab_cost  # Labor is NOT multiplied by quantity
-        total_cost = material_total + labor_total
+
+        material_unit_total = mat_cost 
+        labor_unit_total = lab_cost   
+        total_unit_cost = material_unit_total + labor_unit_total
+        total_cost = total_unit_cost * quantity
         
         return {
             'material_unit_cost': mat_cost,
             'labor_unit_cost': lab_cost,
-            'material_total': material_total,
-            'labor_total': labor_total,
+            'material_unit_total': material_unit_total,
+            'labor_unit_total': labor_unit_total,
+            'total_unit_cost': total_unit_cost,
             'total_cost': total_cost
         }
     
@@ -87,9 +91,10 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                     'total_row': row_idx,
                     'start_row': section_start_row,
                     'end_row': row_idx - 1,
-                    'material_total': section_totals['material_total'],
-                    'labor_total': section_totals['labor_total'],
-                    'total_cost': section_totals['total_cost'],
+                    'material_unit_sum': section_totals['material_unit_sum'],
+                    'labor_unit_sum': section_totals['labor_unit_sum'],
+                    'total_unit_sum': section_totals['total_unit_sum'],
+                    'total_sum': section_totals['total_sum'],
                     'item_count': section_totals['item_count']
                 }
                 
@@ -102,9 +107,10 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 'total_row': None,
                 'start_row': 1,
                 'end_row': max_row,
-                'material_total': 0,
-                'labor_total': 0,
-                'total_cost': 0,
+                'material_unit_sum': 0,
+                'labor_unit_sum': 0,
+                'total_unit_sum': 0,
+                'total_sum': 0,
                 'item_count': 0
             }
         
@@ -153,14 +159,16 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         Calculate section totals by iterating through the range and summing up all item costs.
         This is more reliable than accumulation-based approach.
         """
-        material_total = 0.0
-        labor_total = 0.0
-        total_cost = 0.0
+        material_unit_cost_sum = 0.0
+        labor_unit_cost_sum = 0.0
+        total_unit_cost_sum = 0.0
+        total_cost_sum = 0.0
         item_count = 0
         
         # Get column positions
-        mat_col = self.column_mapping['material_cost']
-        lab_col = self.column_mapping['labor_cost']
+        mat_unit_col = self.column_mapping['material_unit_cost']
+        lab_unit_col = self.column_mapping['labor_unit_cost']
+        total_unit_col = self.column_mapping['total_unit_cost']
         total_col = self.column_mapping['total_cost']
         code_col = self.column_mapping['code']
         
@@ -177,28 +185,33 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 continue
             
             # Get costs from each row
-            mat_cell = worksheet.cell(row=row, column=mat_col).value
-            lab_cell = worksheet.cell(row=row, column=lab_col).value
-            total_cell = worksheet.cell(row=row, column=total_col).value
+            mat_unit_cell = worksheet.cell(row=row, column=mat_unit_col).value
+            lab_unit_cell = worksheet.cell(row=row, column=lab_unit_col).value
+            total_unit_cell = worksheet.cell(row=row, column=total_unit_col).value
+            total_cell = worksheet.cell(row=row, column=total_col)
+
             
             # Convert to float safely
-            mat_cost = self._safe_float(mat_cell)
-            lab_cost = self._safe_float(lab_cell)
-            row_total = self._safe_float(total_cell)
+            mat_unit_cost = self._safe_float(mat_unit_cell)
+            lab_unit_cost = self._safe_float(lab_unit_cell)
+            total_unit_cost = self._safe_float(total_unit_cell)
+            total_cost = self._safe_float(total_cell)
             
             # Only add if this row has actual costs (not header or empty rows)
-            if mat_cost > 0 or lab_cost > 0 or row_total > 0:
-                material_total += mat_cost
-                labor_total += lab_cost
-                total_cost += row_total
+            if mat_unit_cost > 0 or lab_unit_cost > 0 or total_unit_cost > 0 or total_cost > 0:
+                material_unit_cost_sum += mat_unit_cost
+                labor_unit_cost_sum += lab_unit_cost
+                total_unit_cost_sum += total_unit_cost
+                total_cost_sum += total_cost
                 item_count += 1
                 
-                self.logger.debug(f"Row {row} ({code_text}): Mat={mat_cost}, Lab={lab_cost}, Total={row_total}")
+                self.logger.debug(f"Row {row} ({code_text}): Mat unit={mat_unit_cost}, Lab uit={lab_unit_cost}, Total unit={total_unit_cost}, Total={total_cost}")
         
         return {
-            'material_total': material_total,
-            'labor_total': labor_total,
-            'total_cost': total_cost,
+            'material_unit_sum': material_unit_cost_sum,
+            'labor_unit_sum': labor_unit_cost_sum,
+            'total_unit_sum': total_unit_cost_sum,
+            'total_sum': total_cost_sum,
             'item_count': item_count
         }
     
@@ -224,27 +237,31 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             
             self.logger.info(f"Writing pre-calculated totals for '{section_id}' at row {total_row}")
             
-            # Get pre-calculated totals
-            material_total = section_data['material_total']
-            labor_total = section_data['labor_total']
-            total_cost = section_data['total_cost']
+            # Get pre-calculated sums
+            material_unit_sum = section_data['material_unit_sum']
+            labor_unit_sum = section_data['labor_unit_sum']
+            total_unit_sum = section_data['total_unit_sum']
+            total_sum = section_data["total_sum"]
             item_count = section_data['item_count']
-            
+
+             
             self.logger.info(f"Section '{section_id}': {item_count} items, "
-                           f"Material={material_total}, Labor={labor_total}, Total={total_cost}")
+                           f"Material unit={material_unit_sum}, Labor unit={labor_unit_sum}, Total unit={total_unit_sum}, Total sum={total_sum}")
             
             # Write basic totals
-            mat_col = self.column_mapping['material_cost']
-            lab_col = self.column_mapping['labor_cost']
+            mat_unit_col = self.column_mapping['material_unit_cost']
+            lab_unit_col = self.column_mapping['labor_unit_cost']
+            total_unit_col = self.column_mapping['total_unit_cost']
             total_col = self.column_mapping['total_cost']
             
             try:
-                worksheet.cell(row=total_row, column=mat_col).value = material_total
-                worksheet.cell(row=total_row, column=lab_col).value = labor_total
-                worksheet.cell(row=total_row, column=total_col).value = total_cost
+                worksheet.cell(row=total_row, column=mat_unit_col).value = material_unit_sum
+                worksheet.cell(row=total_row, column=lab_unit_col).value = labor_unit_sum
+                worksheet.cell(row=total_row, column=total_unit_col).value = total_unit_col
+                worksheet.cell(row=total_row, column=total_col).value = total_col
                 
                 # Write markup totals
-                self.write_markup_costs(worksheet, total_row, total_cost, 
+                self.write_markup_costs(worksheet, total_row, total_sum, 
                                       markup_options, start_markup_col)
                 
                 self.logger.info(f"Section '{section_id}' totals written successfully")

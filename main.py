@@ -96,7 +96,6 @@ def main():
             'electrical_sheet_processor.py',
             'ac_sheet_processor.py',
             'fp_sheet_processor.py',
-            'summary_sheet_processor.py'
         ]
         
         for file in required_files:

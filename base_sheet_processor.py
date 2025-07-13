@@ -327,6 +327,86 @@ class BaseSheetProcessor(ABC):
         
         return False
     
+
+    def process_final_sheet(self, worksheet, data_worksheet, sheet_info: Dict[str, Any], markup_options: List[int]) -> Dict[str, Any]:
+      """
+      Process final sheet by applying costs to matched items and writing section totals.
+      Uses pre-calculated matches and sections from sheet_info.
+      """
+      items_processed = 0
+      items_failed = 0
+
+      try:
+          # Get stored data from session
+          processed_matches = sheet_info.get('processed_matches', {})
+          sections = sheet_info.get('sections', {})
+
+          self.logger.info(f"Processing final sheet with {len(processed_matches)} matches and {len(sections)} sections")
+
+          # Process individual item costs
+          for row_index, match_data in processed_matches.items():
+              try:
+                  # Get quantity from the worksheet
+                  quantity_col = self.column_mapping.get('quantity', 4)  # Default to column D
+                  quantity = self._get_cell_value(data_worksheet, row_index + self.header_row + 1, quantity_col)
+                  quantity = self._safe_float_conversion(quantity) or 1.0
+
+                  # Calculate costs using the match
+                  master_item = match_data['item']
+                  calculated_costs = self.calculate_item_costs(master_item, quantity)
+
+                  # Write costs to worksheet
+                  self._write_item_costs(worksheet, row_index + self.header_row + 1, calculated_costs)
+                  items_processed += 1
+
+              except Exception as e:
+                  self.logger.error(f"Failed to process item at row {row_index}: {e}")
+                  items_failed += 1
+
+          # Write section totals using pre-calculated data
+          if sections:
+              start_markup_col = max(self.column_mapping.values()) + 2  # Start after main columns
+              self.write_section_totals(worksheet, sections, markup_options, start_markup_col)
+
+          self.logger.info(f"Final sheet processing complete: {items_processed} processed, {items_failed} failed")
+
+      except Exception as e:
+          self.logger.error(f"Error in process_final_sheet: {e}")
+          items_failed += items_processed  # Mark all as failed
+          items_processed = 0
+
+      return {
+          'items_processed': items_processed,
+          'items_failed': items_failed,
+          'sections_written': len(sections)
+      }
+
+    def _get_cell_value(self, worksheet, row: int, col: int):
+        """Safely get cell value from worksheet"""
+        try:
+            return worksheet.cell(row=row, column=col).value
+        except:
+            return None
+
+    def _write_item_costs(self, worksheet, row: int, calculated_costs: Dict[str, float]) -> None:
+        """Write calculated costs to worksheet row"""
+        try:
+            # Map cost types to column positions
+            cost_mapping = {
+                'material_unit_cost': self.column_mapping.get('material_unit_cost'),
+                'labor_unit_cost': self.column_mapping.get('labor_unit_cost'),
+                'total_unit_cost': self.column_mapping.get('total_unit_cost'),
+                'total_cost': self.column_mapping.get('total_cost')
+            }
+
+            # Write each cost to its column
+            for cost_type, col_num in cost_mapping.items():
+                if col_num and cost_type in calculated_costs:
+                    worksheet.cell(row=row, column=col_num).value = calculated_costs[cost_type]
+
+        except Exception as e:
+            self.logger.error(f"Error writing costs to row {row}: {e}")
+    
     @abstractmethod
     def calculate_item_costs(self, master_item: Dict[str, Any], quantity: float) -> Dict[str, float]:
         """Calculate costs for an item. Each sheet type may have different calculation logic."""
@@ -341,3 +421,4 @@ class BaseSheetProcessor(ABC):
     def write_markup_costs(self, worksheet, row: int, base_cost: float, markup_options: List[int], start_col: int) -> None:
         """Write markup costs to worksheet"""
         pass
+

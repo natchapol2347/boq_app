@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Refactored BOQ Processor - Main application class that orchestrates all sheet processors.
-This is the main entry point that uses the specialized sheet processors.
-CLEANED VERSION - Removed redundant/unused code.
+CLEANED VERSION: Removed summary logic, moved total writing to processors.
 """
 
 from flask import Flask, request, jsonify, send_file
@@ -24,7 +23,6 @@ from interior_sheet_processor import InteriorSheetProcessor
 from electrical_sheet_processor import ElectricalSheetProcessor
 from ac_sheet_processor import ACSheetProcessor
 from fp_sheet_processor import FPSheetProcessor
-from summary_sheet_processor import SummarySheetProcessor
 
 logging.basicConfig(level=logging.INFO)
 
@@ -60,9 +58,6 @@ class RefactoredBOQProcessor:
             ACSheetProcessor(self.db_path, self.markup_rates),
             FPSheetProcessor(self.db_path, self.markup_rates)
         ]
-        
-        # Summary processor
-        self.summary_processor = SummarySheetProcessor(self.db_path, self.markup_rates)
         
         # Initialize database and sync master data
         self._init_database()
@@ -103,10 +98,6 @@ class RefactoredBOQProcessor:
             logging.info(f"Found {len(sheet_names)} sheets: {sheet_names}")
             
             for sheet_name in sheet_names:
-                if self.summary_processor.matches_sheet(sheet_name):
-                    logging.info(f"Skipping summary sheet: {sheet_name}")
-                    continue
-                
                 # Find the appropriate processor for this sheet
                 processor = self._find_processor_for_sheet(sheet_name)
                 if not processor:
@@ -156,7 +147,7 @@ class RefactoredBOQProcessor:
         
         @self.app.route('/api/process-boq', methods=['POST'])
         def process_boq_route():
-            """Process uploaded BOQ file"""
+            """Process uploaded BOQ file and store matches + section data"""
             if 'file' not in request.files:
                 return jsonify({'success': False, 'error': 'No file uploaded'})
             
@@ -168,11 +159,8 @@ class RefactoredBOQProcessor:
                 excel_file = pd.ExcelFile(filepath)
                 session_data = {'sheets': {}, 'original_filepath': filepath}
                 
-                # Filter out summary sheets
-                sheets_to_process = [
-                    s for s in excel_file.sheet_names 
-                    if not self.summary_processor.matches_sheet(s)
-                ]
+                # Get all sheets to process
+                sheets_to_process = excel_file.sheet_names
                 
                 total_items = 0
                 total_matches = 0
@@ -181,7 +169,7 @@ class RefactoredBOQProcessor:
                     # Find appropriate processor
                     processor = self._find_processor_for_sheet(sheet_name)
                     if not processor:
-                        logging.warning(f"No processor found for sheet: {sheet_name}")
+                        logging.info(f"No processor found for sheet: {sheet_name} - skipping")
                         continue
                     
                     logging.info(f"Processing BOQ sheet: {sheet_name} with {processor.__class__.__name__}")
@@ -189,15 +177,32 @@ class RefactoredBOQProcessor:
                     # Read sheet data
                     df = pd.read_excel(filepath, sheet_name=sheet_name, header=processor.header_row)
                     
-                    # Process the sheet
+                    # Process the sheet (find matches)
                     processed_items = processor.process_boq_sheet(df)
                     
-                    # Store sheet data
+                    # Pre-calculate section boundaries and store them
+                    try:
+                        # Read the Excel sheet for section analysis
+                        temp_workbook = openpyxl.load_workbook(filepath, data_only=False)
+                        temp_worksheet = temp_workbook[sheet_name]
+                        
+                        # Calculate section boundaries once and store
+                        sections = processor.find_section_boundaries(temp_worksheet, temp_worksheet.max_row)
+                        temp_workbook.close()
+                        
+                        logging.info(f"Pre-calculated {len(sections)} sections for {sheet_name}")
+                        
+                    except Exception as e:
+                        logging.warning(f"Could not pre-calculate sections for {sheet_name}: {e}")
+                        sections = {}
+                    
+                    # Store enhanced sheet data
                     session_data['sheets'][sheet_name] = {
                         'processor_type': processor.__class__.__name__,
                         'header_row': processor.header_row,
                         'processed_matches': {item['original_row_index']: item['match'] for item in processed_items},
                         'row_details': {item['original_row_index']: {'code': item['row_code'], 'name': item['row_name']} for item in processed_items},
+                        'sections': sections,  # Pre-calculated sections with totals
                         'total_rows': len(df),
                         'matched_count': len(processed_items)
                     }
@@ -215,7 +220,8 @@ class RefactoredBOQProcessor:
                     'summary': {
                         'total_items': total_items,
                         'matched_items': total_matches,
-                        'match_rate': (total_matches / total_items * 100) if total_items > 0 else 0
+                        'match_rate': (total_matches / total_items * 100) if total_items > 0 else 0,
+                        'sheets_processed': len(session_data['sheets'])
                     }
                 })
                 
@@ -263,36 +269,17 @@ class RefactoredBOQProcessor:
                     
                     logging.info(f"Generating costs for sheet: {sheet_name}")
                     
-                    # Process the sheet
-                    sheet_result = self._process_sheet_costs(
-                        workbook[sheet_name], 
-                        data_workbook[sheet_name],
-                        processor, 
-                        sheet_info, 
-                        markup_options
+                    # Process the sheet - Let processor handle everything
+                    sheet_result = processor.process_final_sheet(
+                        worksheet=workbook[sheet_name], 
+                        data_worksheet=data_workbook[sheet_name],
+                        sheet_info=sheet_info,
+                        markup_options=markup_options
                     )
                     
                     items_processed += sheet_result['items_processed']
                     items_failed += sheet_result['items_failed']
                     processing_summary[sheet_name] = sheet_result
-                
-                # Generate summary data
-                summary_data = self.summary_processor.process_summary_sheet(
-                    self.sheet_processors, 
-                    session_data['sheets']
-                )
-                
-                # Add summary sheet if it doesn't exist
-                if 'Summary' not in workbook.sheetnames:
-                    summary_sheet = workbook.create_sheet('Summary')
-                else:
-                    summary_sheet = workbook['Summary']
-                
-                self.summary_processor.write_summary_to_worksheet(
-                    summary_sheet, 
-                    summary_data, 
-                    markup_options
-                )
                 
                 # Save workbook
                 workbook.save(output_filepath)
@@ -310,10 +297,10 @@ class RefactoredBOQProcessor:
                 return jsonify({
                     'success': True,
                     'filename': filename,
+                    'download_url': f'/api/download/{filename}',
                     'items_processed': items_processed,
                     'items_failed': items_failed,
-                    'summary': summary_data,
-                    'sheet_details': processing_summary
+                    'processing_summary': processing_summary
                 })
                 
             except Exception as e:
@@ -327,123 +314,6 @@ class RefactoredBOQProcessor:
             if os.path.exists(filepath):
                 return send_file(filepath, as_attachment=True)
             return jsonify({'error': 'File not found'}), 404
-    
-    def _process_sheet_costs(self, worksheet, data_worksheet, processor, sheet_info: Dict[str, Any], markup_options: List[int]) -> Dict[str, Any]:
-        """Process costs for a single sheet using its specific processor with range-based approach"""
-        try:
-            # Find section boundaries (now includes pre-calculated totals)
-            sections = processor.find_section_boundaries(worksheet, worksheet.max_row)
-            
-            # Add markup headers
-            header_row_excel = processor.header_row + 1
-            start_markup_col = worksheet.max_column + 1
-            for i, markup_percent in enumerate(markup_options):
-                cell = worksheet.cell(row=header_row_excel, column=start_markup_col + i)
-                cell.value = f'Markup {markup_percent}%'
-            
-            # Process each matched item (write individual item costs)
-            items_processed = 0
-            items_failed = 0
-            
-            for original_row_index, match_info in sheet_info['processed_matches'].items():
-                if match_info['similarity'] < 50:
-                    continue
-                
-                try:
-                    # Calculate target Excel row
-                    target_row_excel = header_row_excel + 1 + int(original_row_index)
-                    
-                    # Get quantity from data worksheet
-                    quantity = self._get_quantity_from_worksheet(
-                        data_worksheet, 
-                        target_row_excel, 
-                        processor.column_mapping.get('quantity')
-                    )
-                    
-                    # Calculate costs using processor-specific logic
-                    master_item = match_info['item']
-                    costs = processor.calculate_item_costs(master_item, quantity)
-                    
-                    # Write costs to worksheet
-                    success = self._write_item_costs(worksheet, target_row_excel, processor, costs)
-                    
-                    # Write markup costs for individual items
-                    processor.write_markup_costs(
-                        worksheet, 
-                        target_row_excel, 
-                        costs['total_cost'], 
-                        markup_options, 
-                        start_markup_col
-                    )
-                    
-                    if success:
-                        items_processed += 1
-                    else:
-                        items_failed += 1
-                        
-                except Exception as e:
-                    logging.error(f"Error processing item at row {original_row_index}: {e}")
-                    items_failed += 1
-            
-            # Write section totals (now using pre-calculated values from find_section_boundaries)
-            processor.write_section_totals(worksheet, sections, markup_options, start_markup_col)
-            
-            return {
-                'items_processed': items_processed,
-                'items_failed': items_failed,
-                'sections': list(sections.keys()),
-                'total_cost': sum(section['total_cost'] for section in sections.values())
-            }
-            
-        except Exception as e:
-            logging.error(f"Error processing sheet costs: {e}")
-            return {
-                'items_processed': 0,
-                'items_failed': 0,
-                'sections': [],
-                'total_cost': 0.0,
-                'error': str(e)
-            }
-    
-    def _get_quantity_from_worksheet(self, data_worksheet, row: int, qty_col: Optional[int]) -> float:
-        """Get quantity value from worksheet"""
-        if not qty_col:
-            return 1.0
-        
-        try:
-            qty_cell = data_worksheet.cell(row=row, column=qty_col)
-            return float(qty_cell.value or 0)
-        except (ValueError, TypeError):
-            return 1.0
-    
-    def _write_item_costs(self, worksheet, row: int, processor, costs: Dict[str, float]) -> bool:
-        """Write item costs to worksheet"""
-        try:
-            success_count = 0
-            
-            # Write material cost
-            mat_col = processor.column_mapping.get('material_cost')
-            if mat_col:
-                worksheet.cell(row=row, column=mat_col).value = costs['material_unit_cost']
-                success_count += 1
-            
-            # Write labor cost
-            lab_col = processor.column_mapping.get('labor_cost')
-            if lab_col:
-                worksheet.cell(row=row, column=lab_col).value = costs['labor_unit_cost']
-                success_count += 1
-            
-            # Write total cost
-            total_col = processor.column_mapping.get('total_cost')
-            if total_col:
-                worksheet.cell(row=row, column=total_col).value = costs['total_cost']
-                success_count += 1
-            
-            return success_count > 0
-            
-        except Exception as e:
-            logging.error(f"Error writing costs to row {row}: {e}")
-            return False
     
     def run(self, host: str = 'localhost', port: int = 5000, debug: bool = True):
         """Run the Flask application"""
