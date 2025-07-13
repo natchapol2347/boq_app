@@ -188,7 +188,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             mat_unit_cell = worksheet.cell(row=row, column=mat_unit_col).value
             lab_unit_cell = worksheet.cell(row=row, column=lab_unit_col).value
             total_unit_cell = worksheet.cell(row=row, column=total_unit_col).value
-            total_cell = worksheet.cell(row=row, column=total_col)
+            total_cell = worksheet.cell(row=row, column=total_col).value
 
             
             # Convert to float safely
@@ -257,8 +257,8 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             try:
                 worksheet.cell(row=total_row, column=mat_unit_col).value = material_unit_sum
                 worksheet.cell(row=total_row, column=lab_unit_col).value = labor_unit_sum
-                worksheet.cell(row=total_row, column=total_unit_col).value = total_unit_col
-                worksheet.cell(row=total_row, column=total_col).value = total_col
+                worksheet.cell(row=total_row, column=total_unit_col).value = total_unit_sum
+                worksheet.cell(row=total_row, column=total_col).value = total_sum
                 
                 # Write markup totals
                 self.write_markup_costs(worksheet, total_row, total_sum, 

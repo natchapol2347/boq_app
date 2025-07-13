@@ -348,7 +348,7 @@ class BaseSheetProcessor(ABC):
               try:
                   # Get quantity from the worksheet
                   quantity_col = self.column_mapping.get('quantity', 4)  # Default to column D
-                  quantity = self._get_cell_value(data_worksheet, row_index + self.header_row + 1, quantity_col)
+                  quantity = self._get_cell_value(data_worksheet, row_index + self.header_row + 2, quantity_col)
                   quantity = self._safe_float_conversion(quantity) or 1.0
 
                   # Calculate costs using the match
@@ -356,7 +356,7 @@ class BaseSheetProcessor(ABC):
                   calculated_costs = self.calculate_item_costs(master_item, quantity)
 
                   # Write costs to worksheet
-                  self._write_item_costs(worksheet, row_index + self.header_row + 1, calculated_costs)
+                  self._write_item_costs(worksheet, row_index + self.header_row + 2, calculated_costs)
                   items_processed += 1
 
               except Exception as e:
