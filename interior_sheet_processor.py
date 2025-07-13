@@ -62,7 +62,14 @@ class InteriorSheetProcessor(BaseSheetProcessor):
     
     def find_section_boundaries(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
         """
-        Find section boundaries for interior sheets and calculate totals using range-based approach.
+        DEPRECATED: Use find_section_structure() instead.
+        This method is kept for backward compatibility only.
+        """
+        return self.find_section_structure(worksheet, max_row)
+    
+    def find_section_structure(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
+        """
+        Find section structure (boundaries only, no cost calculation) for interior sheets.
         Interior sheets often have simple 'Total' rows marking sections.
         """
         sections = {}
@@ -82,24 +89,14 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 # Get section info (ID and start row)
                 section_id, section_start_row = self._find_section_info(worksheet, row_idx, name_text)
                 
-                # Calculate section totals using range-based approach
-                section_totals = self._calculate_section_totals_from_range(
-                    worksheet, section_start_row, row_idx - 1
-                )
-                
                 sections[section_id] = {
                     'total_row': row_idx,
                     'start_row': section_start_row,
                     'end_row': row_idx - 1,
-                    'material_unit_sum': section_totals['material_unit_sum'],
-                    'labor_unit_sum': section_totals['labor_unit_sum'],
-                    'total_unit_sum': section_totals['total_unit_sum'],
-                    'total_sum': section_totals['total_sum'],
-                    'item_count': section_totals['item_count']
+                    'section_id': section_id
                 }
                 
-                self.logger.info(f"Found interior section '{section_id}' (rows {section_start_row}-{row_idx-1}) "
-                               f"with {section_totals['item_count']} items, total cost: {section_totals['total_cost']}")
+                self.logger.info(f"Found interior section structure '{section_id}' (rows {section_start_row}-{row_idx-1})")
         
         # If no sections found, create a default main section
         if not sections:
@@ -107,11 +104,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 'total_row': None,
                 'start_row': 1,
                 'end_row': max_row,
-                'material_unit_sum': 0,
-                'labor_unit_sum': 0,
-                'total_unit_sum': 0,
-                'total_sum': 0,
-                'item_count': 0
+                'section_id': 'MAIN_SECTION'
             }
         
         return sections

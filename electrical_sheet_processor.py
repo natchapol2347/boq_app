@@ -56,10 +56,22 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
             'total_cost': total_cost
         }
     
+    def find_section_structure(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
+        """Find section structure (boundaries only) for electrical sheets - STUB IMPLEMENTATION"""
+        # TODO: Implement proper electrical section structure detection
+        # For now, return a single main section to avoid errors
+        return {
+            'MAIN_SECTION': {
+                'total_row': None,
+                'start_row': 1,
+                'end_row': max_row,
+                'section_id': 'MAIN_SECTION'
+            }
+        }
+    
     def find_section_boundaries(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
         """
-        Find section boundaries for electrical sheets and calculate totals using range-based approach.
-        Electrical sheets often have section headers like 'PANELBOARD', 'CONDUIT', etc.
+        DEPRECATED: Use find_section_structure() instead. Kept for backward compatibility.
         """
         sections = {}
         name_col = self.column_mapping['name']

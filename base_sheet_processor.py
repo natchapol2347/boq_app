@@ -363,10 +363,12 @@ class BaseSheetProcessor(ABC):
                   self.logger.error(f"Failed to process item at row {row_index}: {e}")
                   items_failed += 1
 
-          # Write section totals using pre-calculated data
+          # Calculate and write section totals using structure from session
           if sections:
+              # Calculate totals from the now-filled worksheet
+              sections_with_totals = self.calculate_section_totals(worksheet, sections)
               start_markup_col = max(self.column_mapping.values()) + 2  # Start after main columns
-              self.write_section_totals(worksheet, sections, markup_options, start_markup_col)
+              self.write_section_totals(worksheet, sections_with_totals, markup_options, start_markup_col)
 
           self.logger.info(f"Final sheet processing complete: {items_processed} processed, {items_failed} failed")
 
@@ -416,6 +418,33 @@ class BaseSheetProcessor(ABC):
     def find_section_boundaries(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
         """Find section boundaries and total rows for this sheet type"""
         pass
+    
+    @abstractmethod
+    def find_section_structure(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
+        """Find section structure (boundaries only, no cost calculation)"""
+        pass
+    
+    def calculate_section_totals(self, worksheet, section_structure: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Calculate section totals from filled worksheet using pre-determined structure"""
+        for section_id, section_data in section_structure.items():
+            if 'start_row' in section_data and 'end_row' in section_data:
+                # Calculate totals using the existing range-based calculation
+                totals = self._calculate_section_totals_from_range(
+                    worksheet, section_data['start_row'], section_data['end_row']
+                )
+                # Update section data with calculated totals
+                section_data.update(totals)
+        return section_structure
+    
+    def _calculate_section_totals_from_range(self, worksheet, start_row: int, end_row: int) -> Dict[str, float]:
+        """Base implementation for calculating section totals from range - to be overridden by subclasses"""
+        return {
+            'material_unit_sum': 0.0,
+            'labor_unit_sum': 0.0,
+            'total_unit_sum': 0.0,
+            'total_sum': 0.0,
+            'item_count': 0
+        }
     
     @abstractmethod
     def write_markup_costs(self, worksheet, row: int, base_cost: float, markup_options: List[int], start_col: int) -> None:

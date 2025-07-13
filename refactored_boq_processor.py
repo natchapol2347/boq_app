@@ -186,8 +186,8 @@ class RefactoredBOQProcessor:
                         temp_workbook = openpyxl.load_workbook(filepath, data_only=False)
                         temp_worksheet = temp_workbook[sheet_name]
                         
-                        # Calculate section boundaries once and store
-                        sections = processor.find_section_boundaries(temp_worksheet, temp_worksheet.max_row)
+                        # Find section structure only (no cost calculation)
+                        sections = processor.find_section_structure(temp_worksheet, temp_worksheet.max_row)
                         temp_workbook.close()
                         
                         logging.info(f"Pre-calculated {len(sections)} sections for {sheet_name}")
@@ -202,7 +202,7 @@ class RefactoredBOQProcessor:
                         'header_row': processor.header_row,
                         'processed_matches': {item['original_row_index']: item['match'] for item in processed_items},
                         'row_details': {item['original_row_index']: {'code': item['row_code'], 'name': item['row_name']} for item in processed_items},
-                        'sections': sections,  # Pre-calculated sections with totals
+                        'sections': sections,  
                         'total_rows': len(df),
                         'matched_count': len(processed_items)
                     }
