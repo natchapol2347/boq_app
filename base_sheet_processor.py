@@ -58,9 +58,9 @@ class BaseSheetProcessor(ABC):
                 internal_id TEXT PRIMARY KEY, 
                 code TEXT, 
                 name TEXT NOT NULL,
-                material_unit_cost REAL DEFAULT 0, 
-                labor_unit_cost REAL DEFAULT 0, 
-                total_unit_cost REAL DEFAULT 0,
+                material_cost REAL DEFAULT 0, 
+                labor_cost REAL DEFAULT 0, 
+                total_cost REAL DEFAULT 0,
                 unit TEXT
             )
         ''')
@@ -106,35 +106,39 @@ class BaseSheetProcessor(ABC):
             # Get values from fixed positions
             code_idx = self.column_mapping['code'] - 1  # Convert to 0-based
             name_idx = self.column_mapping['name'] - 1
-            material_idx = self.column_mapping['material_unit_cost'] - 1
-            labor_idx = self.column_mapping['labor_unit_cost'] - 1
-            unit_idx = (self.column_mapping['unit'] - 1) if 'unit' in self.column_mapping else None
+            material_idx = self.column_mapping['material_cost'] - 1
+            labor_idx = self.column_mapping['labor_cost'] - 1
+            unit_idx = self.column_mapping.get('unit', 0) - 1 if 'unit' in self.column_mapping else None
             
             # Extract values safely
             row_values = row.values
             if len(row_values) <= max(code_idx, name_idx, material_idx, labor_idx):
                 return None
             
-            # Extract values exactly as they appear in Excel (no cleaning)
-            code = str(row_values[code_idx]) if code_idx < len(row_values) and pd.notna(row_values[code_idx]) else ''
-            name = str(row_values[name_idx]) if name_idx < len(row_values) and pd.notna(row_values[name_idx]) else ''
+            code = str(row_values[code_idx]) if code_idx < len(row_values) else ''
+            name = str(row_values[name_idx]) if name_idx < len(row_values) else ''
             
-            # Skip total/summary rows and completely empty rows (but don't modify data)
-            if(self._is_skip_row(code) or (not name.strip() and not code.strip())):
+            # Clean item name
+            name = self._clean_item_name(name, code)
+            if not name:
                 return None
             
-            # Convert cost values only
+            # Convert cost values
             material_cost = self._safe_float_conversion(row_values[material_idx] if material_idx < len(row_values) else 0)
             labor_cost = self._safe_float_conversion(row_values[labor_idx] if labor_idx < len(row_values) else 0)
-            unit = str(row_values[unit_idx]) if unit_idx is not None and unit_idx < len(row_values) and pd.notna(row_values[unit_idx]) else ''
+            unit = str(row_values[unit_idx]) if unit_idx is not None and unit_idx < len(row_values) else ''
+            
+            # Skip empty or total rows
+            if self._is_skip_row(name):
+                return None
             
             return {
                 'internal_id': f"item_{uuid.uuid4().hex[:8]}",
                 'code': code,
                 'name': name,
-                'material_unit_cost': material_cost,
-                'labor_unit_cost': labor_cost,
-                'total_unit_cost': material_cost + labor_cost,
+                'material_cost': material_cost,
+                'labor_cost': labor_cost,
+                'total_cost': material_cost + labor_cost,
                 'unit': unit
             }
             
@@ -142,7 +146,19 @@ class BaseSheetProcessor(ABC):
             self.logger.error(f"Error extracting item data: {e}")
             return None
     
-   
+    def _clean_item_name(self, name: str, code: str) -> str:
+        """Clean and improve item names, especially for '-' values"""
+        if not name or pd.isna(name) or name.strip() in ['-', '', 'nan', 'none']:
+            if code and code.strip() and code.strip() not in ['-', 'nan', 'none']:
+                return f"Item {code.strip()}"
+            else:
+                return f"Item_{uuid.uuid4().hex[:6]}"
+        
+        cleaned = name.strip()
+        if cleaned == '-':
+            return f"Unnamed item {uuid.uuid4().hex[:6]}"
+        
+        return cleaned
     
     def _safe_float_conversion(self, value: Any) -> float:
         """Safely convert value to float"""
@@ -151,23 +167,23 @@ class BaseSheetProcessor(ABC):
         except (ValueError, TypeError):
             return 0
     
-    def _is_skip_row(self, code: str) -> bool:
+    def _is_skip_row(self, name: str) -> bool:
         """Check if row should be skipped"""
-        return any(keyword in code.lower() for keyword in ['total', 'รวม', 'sum', 'subtotal'])
+        return any(keyword in name.lower() for keyword in ['total', 'รวม', 'sum', 'subtotal'])
     
     def _handle_duplicate_item(self, existing_item: Dict[str, Any], new_item: Dict[str, Any]) -> None:
         """Handle duplicate items by updating costs if new item has better data"""
         self.logger.warning(f"Duplicate item: Code='{new_item['code']}', Name='{new_item['name']}'")
         
         # Update if new item has costs and existing doesn't
-        if (new_item['material_unit_cost'] > 0 or new_item['labor_unit_cost'] > 0) and \
-           (existing_item['material_unit_cost'] == 0 and existing_item['labor_unit_cost'] == 0):
+        if (new_item['material_cost'] > 0 or new_item['labor_cost'] > 0) and \
+           (existing_item['material_cost'] == 0 and existing_item['labor_cost'] == 0):
             existing_item.update({
-                'material_unit_cost': new_item['material_unit_cost'],
-                'labor_unit_cost': new_item['labor_unit_cost'],
-                'total_unit_cost': new_item['total_unit_cost']
+                'material_cost': new_item['material_cost'],
+                'labor_cost': new_item['labor_cost'],
+                'total_cost': new_item['total_cost']
             })
-            self.logger.info(f"Updated costs for duplicate: Material={new_item['material_unit_cost']}, Labor={new_item['labor_unit_cost']}")
+            self.logger.info(f"Updated costs for duplicate: Material={new_item['material_cost']}, Labor={new_item['labor_cost']}")
     
     def sync_to_database(self, df: pd.DataFrame) -> None:
         """Sync processed data to database"""
@@ -182,15 +198,15 @@ class BaseSheetProcessor(ABC):
             for _, row in df.iterrows():
                 try:
                     conn.execute(
-                        f"INSERT INTO {self.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, total_unit_cost, unit) "
+                        f"INSERT INTO {self.table_name} (internal_id, code, name, material_cost, labor_cost, total_cost, unit) "
                         f"VALUES (?, ?, ?, ?, ?, ?, ?)",
                         (
                             row['internal_id'],
                             row['code'],
                             row['name'],
-                            row['material_unit_cost'],
-                            row['labor_unit_cost'],
-                            row['total_unit_cost'],
+                            row['material_cost'],
+                            row['labor_cost'],
+                            row['total_cost'],
                             row.get('unit', '')
                         )
                     )
@@ -236,7 +252,6 @@ class BaseSheetProcessor(ABC):
                 # Special handling for hyphen-only names
                 if is_hyphen_only and item_code == sanitized_code:
                     return {'item': item_dict, 'similarity': 95}
-                #WORK2: hyphen check logic weird, may not need it just need to decouple sheet logic
                 
                 # Code match with name similarity boost
                 if item_code == sanitized_code:
@@ -246,7 +261,6 @@ class BaseSheetProcessor(ABC):
                     if adjusted_similarity > best_similarity:
                         best_similarity = adjusted_similarity
                         best_match = {'item': item_dict, 'similarity': adjusted_similarity}
-                # WORK1: have case if name match but code doesn't match too
         
         # Fuzzy matching on name
         for item_row in all_items:
@@ -259,7 +273,7 @@ class BaseSheetProcessor(ABC):
                 best_match = {'item': item_dict, 'similarity': similarity}
         
         return best_match
-    #WORK3:make nested dicts pydantic models for easy code maintenance and reading
+    
     def process_boq_sheet(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """Process a BOQ sheet and return processed matches"""
         processed_items = []
@@ -313,7 +327,7 @@ class BaseSheetProcessor(ABC):
         
         return False
     
-    #WORK4: have non interior sheet function for calculting columns such as material_total, labor_total (multiplied with qty)
+
     def process_final_sheet(self, worksheet, data_worksheet, sheet_info: Dict[str, Any], markup_options: List[int]) -> Dict[str, Any]:
       """
       Process final sheet by applying costs to matched items and writing section totals.

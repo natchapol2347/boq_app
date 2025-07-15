@@ -42,8 +42,8 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         Calculate costs for interior items.
         Interior logic: Material cost * quantity + Labor cost (not multiplied)
         """
-        mat_cost = float(master_item.get('material_unit_cost', 0))
-        lab_cost = float(master_item.get('labor_unit_cost', 0))
+        mat_cost = float(master_item.get('material_cost', 0))
+        lab_cost = float(master_item.get('labor_cost', 0))
         
 
         material_unit_total = mat_cost 
@@ -311,7 +311,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 total_cost = material_cost + labor_cost
                 
                 cursor.execute(
-                    f"INSERT INTO {self.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, total_unit_cost, unit) "
+                    f"INSERT INTO {self.table_name} (internal_id, code, name, material_cost, labor_cost, total_cost, unit) "
                     f"VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (item_id, code, name, material_cost, labor_cost, total_cost, unit)
                 )
@@ -327,14 +327,14 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             cursor = conn.cursor()
             
             # Check if table has costs
-            cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_unit_cost > 0 OR labor_unit_cost > 0")
+            cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_cost > 0 OR labor_cost > 0")
             count = cursor.fetchone()[0]
             
             if count == 0:
                 self.logger.info(f"No costs found in {self.table_name}, adding sample costs")
-                cursor.execute(f"UPDATE {self.table_name} SET material_unit_cost = 300, labor_cost = 200, total_cost = 500")
+                cursor.execute(f"UPDATE {self.table_name} SET material_cost = 300, labor_cost = 200, total_cost = 500")
                 conn.commit()
                 
-                cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_unit_cost > 0")
+                cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_cost > 0")
                 updated = cursor.fetchone()[0]
                 self.logger.info(f"Added sample costs to {updated} items in {self.table_name}")
