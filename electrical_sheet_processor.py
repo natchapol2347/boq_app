@@ -108,7 +108,7 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
                     'item_count': section_totals['item_count']
                 }
                 
-                self.logger.info(f"Found electrical section '{section_id}' (rows {section_start_row}-{row_idx-1}) "
+                self.logger.debug(f"Found electrical section '{section_id}' (rows {section_start_row}-{row_idx-1}) "
                                f"with {section_totals['item_count']} items, total cost: {section_totals['total_cost']}")
         
         # If no sections found, create a default main section
@@ -260,7 +260,7 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
             count = cursor.fetchone()[0]
             
             if count > 0:
-                self.logger.info(f"Table {self.table_name} already has {count} items")
+                self.logger.debug(f"Table {self.table_name} already has {count} items")
                 return
             
             # Add sample electrical items
@@ -288,7 +288,7 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
                 )
             
             conn.commit()
-            self.logger.info(f"Added {len(sample_items)} sample items to {self.table_name}")
+            self.logger.debug(f"Added {len(sample_items)} sample items to {self.table_name}")
     
     def ensure_costs_exist(self) -> None:
         """Ensure table has items with costs"""
@@ -302,10 +302,10 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
             count = cursor.fetchone()[0]
             
             if count == 0:
-                self.logger.info(f"No costs found in {self.table_name}, adding sample costs")
+                self.logger.debug(f"No costs found in {self.table_name}, adding sample costs")
                 cursor.execute(f"UPDATE {self.table_name} SET material_cost = 200, labor_cost = 150, total_cost = 350")
                 conn.commit()
                 
                 cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_cost > 0")
                 updated = cursor.fetchone()[0]
-                self.logger.info(f"Added sample costs to {updated} items in {self.table_name}")
+                self.logger.debug(f"Added sample costs to {updated} items in {self.table_name}")

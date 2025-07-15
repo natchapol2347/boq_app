@@ -37,13 +37,22 @@ class InteriorSheetProcessor(BaseSheetProcessor):
     def table_name(self) -> str:
         return 'interior_items'
     
-    def calculate_item_costs(self, master_item: Dict[str, Any], quantity: float) -> Dict[str, float]:
+    def calculate_item_costs(self, master_item: Dict[str, Any], quantity: float, similarity: float = 100) -> Dict[str, float]:
         """
         Calculate costs for interior items.
         Interior logic: Material cost * quantity + Labor cost (not multiplied)
         """
-        mat_cost = float(master_item.get('material_cost', 0))
-        lab_cost = float(master_item.get('labor_cost', 0))
+        # If similarity was too low, return "needs checking" values
+        if similarity < 50:
+            return {
+                'material_unit_cost': "ต้องตรวจสอบ",
+                'labor_unit_cost': "ต้องตรวจสอบ",
+                'total_unit_cost': "ต้องตรวจสอบ",
+                'total_cost': "ต้องตรวจสอบ"
+            }
+
+        mat_cost = float(master_item.get('material_unit_cost', 0))
+        lab_cost = float(master_item.get('labor_unit_cost', 0))
         
 
         material_unit_total = mat_cost 
@@ -96,7 +105,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                     'section_id': section_id
                 }
                 
-                self.logger.info(f"Found interior section structure '{section_id}' (rows {section_start_row}-{row_idx-1})")
+                self.logger.debug(f"Found interior section structure '{section_id}' (rows {section_start_row}-{row_idx-1})")
         
         # If no sections found, create a default main section
         if not sections:
@@ -228,7 +237,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             if not total_row:
                 continue
             
-            self.logger.info(f"Writing pre-calculated totals for '{section_id}' at row {total_row}")
+            self.logger.debug(f"Writing pre-calculated totals for '{section_id}' at row {total_row}")
             
             # Get pre-calculated sums
             material_unit_sum = section_data['material_unit_sum']
@@ -238,7 +247,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             item_count = section_data['item_count']
 
              
-            self.logger.info(f"Section '{section_id}': {item_count} items, "
+            self.logger.debug(f"Section '{section_id}': {item_count} items, "
                            f"Material unit={material_unit_sum}, Labor unit={labor_unit_sum}, Total unit={total_unit_sum}, Total sum={total_sum}")
             
             # Write basic totals
@@ -257,7 +266,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 self.write_markup_costs(worksheet, total_row, total_sum, 
                                       markup_options, start_markup_col)
                 
-                self.logger.info(f"Section '{section_id}' totals written successfully")
+                self.logger.debug(f"Section '{section_id}' totals written successfully")
                 
             except Exception as e:
                 self.logger.error(f"Error writing section totals for '{section_id}': {e}")
@@ -289,7 +298,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             count = cursor.fetchone()[0]
             
             if count > 0:
-                self.logger.info(f"Table {self.table_name} already has {count} items")
+                self.logger.debug(f"Table {self.table_name} already has {count} items")
                 return
             
             # Add sample interior items
@@ -311,13 +320,13 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 total_cost = material_cost + labor_cost
                 
                 cursor.execute(
-                    f"INSERT INTO {self.table_name} (internal_id, code, name, material_cost, labor_cost, total_cost, unit) "
+                    f"INSERT INTO {self.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, total_unit_cost, unit) "
                     f"VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (item_id, code, name, material_cost, labor_cost, total_cost, unit)
                 )
             
             conn.commit()
-            self.logger.info(f"Added {len(sample_items)} sample items to {self.table_name}")
+            self.logger.debug(f"Added {len(sample_items)} sample items to {self.table_name}")
     
     def ensure_costs_exist(self) -> None:
         """Ensure table has items with costs"""
@@ -327,14 +336,14 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             cursor = conn.cursor()
             
             # Check if table has costs
-            cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_cost > 0 OR labor_cost > 0")
+            cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_unit_cost > 0 OR labor_unit_cost > 0")
             count = cursor.fetchone()[0]
             
             if count == 0:
-                self.logger.info(f"No costs found in {self.table_name}, adding sample costs")
-                cursor.execute(f"UPDATE {self.table_name} SET material_cost = 300, labor_cost = 200, total_cost = 500")
+                self.logger.debug(f"No costs found in {self.table_name}, adding sample costs")
+                cursor.execute(f"UPDATE {self.table_name} SET material_unit_cost = 300, labor_cost = 200, total_cost = 500")
                 conn.commit()
                 
-                cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_cost > 0")
+                cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_unit_cost > 0")
                 updated = cursor.fetchone()[0]
-                self.logger.info(f"Added sample costs to {updated} items in {self.table_name}")
+                self.logger.debug(f"Added sample costs to {updated} items in {self.table_name}")
