@@ -152,8 +152,9 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 if section_code:
                     return section_code, section_header_row + 1  # (section_id, start_row after header)
         
-        # FALLBACK: Use the name from total row and estimate start
-        fallback_start = max(1, total_row - 20)
+        # FALLBACK: For first section, start from header row + 1
+        # If no previous total found, this is likely the first section
+        fallback_start = self.header_row + 1  # Start right after header
         return section_name_from_total or f"FALLBACK{total_row}", fallback_start
     
     def _calculate_section_totals_from_range(self, worksheet, start_row: int, end_row: int) -> Dict[str, float]:
@@ -182,8 +183,8 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             code_cell = worksheet.cell(row=row, column=code_col).value
             code_text = str(code_cell).strip() if code_cell else ""
             
-            # Skip section headers and empty rows
-            if not code_text or code_text.lower() in ['total', '']:
+            # Skip only actual total rows, not empty code cells
+            if code_text.lower() == 'total':
                 continue
             
             # Get costs from each row
