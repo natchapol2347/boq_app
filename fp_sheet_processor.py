@@ -4,8 +4,11 @@ Fire Protection sheet processor - handles fire protection system sheets.
 Updated to match new abstract methods and range-based approach.
 """
 
-from typing import Dict, Any, List, Tuple
-import re
+from typing import Dict, Any, List, Tuple, Optional
+import pandas as pd
+import uuid
+import sqlite3
+
 from base_sheet_processor import BaseSheetProcessor
 
 class FPSheetProcessor(BaseSheetProcessor):
@@ -34,6 +37,129 @@ class FPSheetProcessor(BaseSheetProcessor):
     @property
     def table_name(self) -> str:
         return 'fp_items'
+    def create_table(self, conn: sqlite3.Connection) -> None:
+        """Create the database table for this sheet type"""
+        cursor = conn.cursor()
+        cursor.execute(f'''
+            CREATE TABLE IF NOT EXISTS {self.table_name} (
+                internal_id TEXT PRIMARY KEY, 
+                code TEXT, 
+                name TEXT NOT NULL,
+                material_unit_cost REAL DEFAULT 0, 
+                labor_unit_cost REAL DEFAULT 0, 
+                total_unit_cost REAL DEFAULT 0,
+                unit TEXT
+            )
+        ''')
+        conn.commit()
+
+    def sync_to_database(self, df: pd.DataFrame) -> None:
+        """Sync processed data to database"""
+        if df.empty:
+            return
+        
+        with sqlite3.connect(self.db_path) as conn:
+            # Clear existing data
+            conn.execute(f"DELETE FROM {self.table_name}")
+            
+            # Insert new data
+            for _, row in df.iterrows():
+                try:
+                    conn.execute(
+                        f"INSERT INTO {self.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, total_unit_cost, unit) "
+                        f"VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            row['internal_id'],
+                            row['code'],
+                            row['name'],
+                            row['material_unit_cost'],
+                            row['labor_unit_cost'],
+                            row['total_unit_cost'],
+                            row.get('unit', '')
+                        )
+                    )
+                except sqlite3.IntegrityError as e:
+                    self.logger.error(f"Database integrity error: {e}")
+                    continue
+            
+            conn.commit()
+            self.logger.debug(f"Synchronized {len(df)} items to {self.table_name}")
+
+    def extract_item_data(self, row: pd.Series) -> Optional[Dict[str, Any]]:
+        """Extract item data from a row using column mapping"""
+        try:
+            # Get values from fixed positions
+            code_idx = self.column_mapping['code'] - 1  # Convert to 0-based
+            name_idx = self.column_mapping['name'] - 1
+            material_idx = self.column_mapping['material_unit_cost'] - 1
+            labor_idx = self.column_mapping['labor_unit_cost'] - 1
+            unit_idx = (self.column_mapping['unit'] - 1) if 'unit' in self.column_mapping else None
+            
+            # Extract values safely
+            row_values = row.values
+            if len(row_values) <= max(code_idx, name_idx, material_idx, labor_idx):
+                return None
+            
+            # Extract values exactly as they appear in Excel (no cleaning)
+            code = str(row_values[code_idx]) if code_idx < len(row_values) and pd.notna(row_values[code_idx]) else ''
+            name = str(row_values[name_idx]) if name_idx < len(row_values) and pd.notna(row_values[name_idx]) else ''
+            
+            # Skip total/summary rows and completely empty rows (but don't modify data)
+            if(self._is_skip_row(code) or (not name.strip() and not code.strip())):
+                return None
+            
+            # Convert cost values only
+            material_cost = self._safe_float_conversion(row_values[material_idx] if material_idx < len(row_values) else 0)
+            labor_cost = self._safe_float_conversion(row_values[labor_idx] if labor_idx < len(row_values) else 0)
+            unit = str(row_values[unit_idx]) if unit_idx is not None and unit_idx < len(row_values) and pd.notna(row_values[unit_idx]) else ''
+            
+            return {
+                'internal_id': f"item_{uuid.uuid4().hex[:8]}",
+                'code': code,
+                'name': name,
+                'material_unit_cost': material_cost,
+                'labor_unit_cost': labor_cost,
+                'total_unit_cost': material_cost + labor_cost,
+                'unit': unit
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting item data: {e}")
+            return None
+    def handle_duplicate_item(self, existing_item: Dict[str, Any], new_item: Dict[str, Any]) -> None:
+        """Handle duplicate items by updating costs if new item has better data"""
+        self.logger.warning(f"Duplicate item: Code='{new_item['code']}', Name='{new_item['name']}'")
+        
+        # Update if new item has costs and existing doesn't
+        if (new_item['material_unit_cost'] > 0 or new_item['labor_unit_cost'] > 0) and \
+           (existing_item['material_unit_cost'] == 0 and existing_item['labor_unit_cost'] == 0):
+            existing_item.update({
+                'material_unit_cost': new_item['material_unit_cost'],
+                'labor_unit_cost': new_item['labor_unit_cost'],
+                'total_unit_cost': new_item['total_unit_cost']
+            })
+            self.logger.debug(f"Updated costs for duplicate: Material={new_item['material_unit_cost']}, Labor={new_item['labor_unit_cost']}")
+    
+    def write_item_costs(self, worksheet, row: int, calculated_costs: Dict[str, float]) -> None:
+        """Write calculated costs to worksheet row"""
+        try:
+            # Map cost types to column positions
+            cost_mapping = {
+                'material_unit_cost': self.column_mapping.get('material_unit_cost'),
+                'labor_unit_cost': self.column_mapping.get('labor_unit_cost'),
+                'total_unit_cost': self.column_mapping.get('total_unit_cost'),
+                'total_cost': self.column_mapping.get('total_cost')
+            }
+
+            # Write each cost to its column
+            for cost_type, col_num in cost_mapping.items():
+                if col_num and cost_type in calculated_costs:
+                    worksheet.cell(row=row, column=col_num).value = calculated_costs[cost_type]
+
+        except Exception as e:
+            self.logger.error(f"Error writing costs to row {row}: {e}")
+    
+    
     
     def calculate_item_costs(self, master_item: Dict[str, Any], quantity: float) -> Dict[str, float]:
         """
@@ -93,7 +219,7 @@ class FPSheetProcessor(BaseSheetProcessor):
                 section_id, section_start_row = self._find_section_info(worksheet, row_idx, name_text)
                 
                 # Calculate section totals using range-based approach
-                section_totals = self._calculate_section_totals_from_range(
+                section_totals = self.calculate_section_totals_from_range(
                     worksheet, section_start_row, row_idx - 1
                 )
                 
@@ -171,7 +297,7 @@ class FPSheetProcessor(BaseSheetProcessor):
         
         return any(indicator in combined_text for indicator in fp_total_indicators)
     
-    def _calculate_section_totals_from_range(self, worksheet, start_row: int, end_row: int) -> Dict[str, float]:
+    def calculate_section_totals_from_range(self, worksheet, start_row: int, end_row: int) -> Dict[str, float]:
         """Calculate section totals for fire protection items"""
         material_total = 0.0
         labor_total = 0.0
