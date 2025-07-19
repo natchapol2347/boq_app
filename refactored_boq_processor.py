@@ -24,7 +24,7 @@ from electrical_sheet_processor import ElectricalSheetProcessor
 from ac_sheet_processor import ACSheetProcessor
 from fp_sheet_processor import FPSheetProcessor
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 class RefactoredBOQProcessor:
     """Main BOQ processor that orchestrates all sheet-specific processors"""
@@ -86,8 +86,7 @@ class RefactoredBOQProcessor:
         master_excel_path = os.path.join(self.master_data_folder, 'master.xlsx')
         
         if not os.path.exists(master_excel_path):
-            logging.warning(f"Master Excel file not found at {master_excel_path}")
-            self._add_sample_data()
+            logging.error(f"Master Excel file not found at {master_excel_path}")
             return
         
         logging.info(f"Synchronizing master data from {master_excel_path}")
@@ -115,10 +114,7 @@ class RefactoredBOQProcessor:
                 else:
                     logging.warning(f"No data processed for sheet: {sheet_name}")
             
-            # Ensure all processors have cost data
-            for processor in self.sheet_processors:
-                processor.ensure_costs_exist()
-                
+     
         except Exception as e:
             logging.error(f"Error synchronizing master data: {e}", exc_info=True)
     
@@ -129,11 +125,7 @@ class RefactoredBOQProcessor:
                 return processor
         return None
     
-    def _add_sample_data(self):
-        """Add sample data to all processors if no master data is available"""
-        logging.info("Adding sample data to all processors")
-        for processor in self.sheet_processors:
-            processor.add_sample_data()
+    
     
     def store_processing_session(self, session_id: str, data: Dict[str, Any]):
         """Store processing session data"""
