@@ -262,6 +262,29 @@ class BaseSheetProcessor(ABC):
         
         return False
     
+    def _is_summary_sheet(self, sheet_name: str) -> bool:
+        """Check if this is a summary sheet that should skip markup processing"""
+        if not sheet_name:
+            return False
+        
+        sheet_name_lower = sheet_name.lower()
+        
+        # Check for common summary sheet patterns
+        summary_patterns = [
+            'sum',           # Summary sheets often contain 'sum'
+            'summary',       # Direct summary naming
+            'รวม',           # Thai word for 'total/sum'
+            'สรุป',          # Thai word for 'summary'
+            'total'          # English total
+        ]
+        
+        # Check if any summary pattern is in the sheet name
+        for pattern in summary_patterns:
+            if pattern in sheet_name_lower:
+                return True
+        
+        return False
+    
     #WORK4: have non interior sheet function for calculting columns such as material_total, labor_total (multiplied with qty)
     def process_final_sheet(self, worksheet, data_worksheet, sheet_info: Dict[str, Any], markup_options: List[int]) -> Dict[str, Any]:
       """
@@ -272,6 +295,19 @@ class BaseSheetProcessor(ABC):
       items_failed = 0
 
       try:
+          # Check if this is a summary sheet - skip markup processing if so
+          sheet_name = worksheet.title
+          is_summary_sheet = self._is_summary_sheet(sheet_name)
+          
+          if is_summary_sheet:
+              self.logger.debug(f"Detected summary sheet '{sheet_name}' - skipping markup processing")
+              return {
+                  'items_processed': 0,
+                  'items_failed': 0,
+                  'sections_written': 0,
+                  'is_summary_sheet': True
+              }
+          
           # Get stored data from session
           processed_matches = sheet_info.get('processed_matches', {})
           sections = sheet_info.get('sections', {})
@@ -304,6 +340,10 @@ class BaseSheetProcessor(ABC):
               # Calculate totals from the now-filled worksheet
               sections_with_totals = self.calculate_section_totals(worksheet, sections)
               start_markup_col = max(self.column_mapping.values()) + 2  # Start after main columns
+              
+              # Write markup headers first
+              self.write_markup_headers(worksheet, markup_options, start_markup_col)
+              
               self.write_section_totals(worksheet, sections_with_totals, markup_options, start_markup_col)
 
           self.logger.debug(f"Final sheet processing complete: {items_processed} processed, {items_failed} failed")
@@ -337,6 +377,20 @@ class BaseSheetProcessor(ABC):
                 # Update section data with calculated totals
                 section_data.update(totals)
         return section_structure
+    
+    def write_markup_headers(self, worksheet, markup_options: List[int], start_markup_col: int) -> None:
+        """Write markup percentage headers at the header row"""
+        try:
+            header_row = self.header_row + 1  # Convert from 0-based to 1-based
+            
+            for i, markup_percent in enumerate(markup_options):
+                col_num = start_markup_col + i
+                header_text = f"{markup_percent}% Markup"
+                worksheet.cell(row=header_row, column=col_num).value = header_text
+                self.logger.debug(f"Wrote markup header '{header_text}' to ({header_row}, {col_num})")
+        
+        except Exception as e:
+            self.logger.error(f"Error writing markup headers: {e}")
     
     
     @abstractmethod

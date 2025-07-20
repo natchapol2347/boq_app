@@ -49,7 +49,7 @@ class RefactoredBOQProcessor:
             os.makedirs(folder, exist_ok=True)
         
         # Markup rates
-        self.markup_rates = {100: 1.00, 130: 1.30, 150: 1.50, 50: 0.50, 30: 0.30}
+        self.markup_rates = {30: 0.30, 50: 0.50, 100: 1.00, 130: 1.30, 150: 1.50}
         
         # Initialize sheet processors
         self.sheet_processors = [
@@ -232,7 +232,7 @@ class RefactoredBOQProcessor:
             
             session_data = self.processing_sessions[session_id]['data']
             original_filepath = session_data['original_filepath']
-            markup_options = data.get('markup_options', [100, 130, 150, 50, 30])
+            markup_options = data.get('markup_options', [30, 50, 100, 130, 150])
             
             try:
                 # Generate output filename
