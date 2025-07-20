@@ -26,12 +26,15 @@ class FPSheetProcessor(BaseSheetProcessor):
     def column_mapping(self) -> Dict[str, int]:
         return {
             'code': 2,          # Column B
-            'name': 3,          # Column C
+            'name': 4,          # Column D
+            'total_row_col': 3,     #Column C (รวมรายการ is here)
             'unit': 6,          # Column F
             'quantity': 7,      # Column G
-            'material_cost': 8, # Column H
-            'labor_cost': 10,   # Column J
-            'total_cost': 12    # Column L
+            'material_unit_cost': 8, # Column H
+            'material_cost': 9, # Column I
+            'labor_unit_cost': 10,   # Column J
+            'labor_cost': 11, # Column K
+            'total_cost': 12,    # Column L
         }
     
     @property
@@ -46,8 +49,7 @@ class FPSheetProcessor(BaseSheetProcessor):
                 code TEXT, 
                 name TEXT NOT NULL,
                 material_unit_cost REAL DEFAULT 0, 
-                labor_unit_cost REAL DEFAULT 0, 
-                total_unit_cost REAL DEFAULT 0,
+                labor_unit_cost REAL DEFAULT 0,
                 unit TEXT
             )
         ''')
@@ -66,15 +68,14 @@ class FPSheetProcessor(BaseSheetProcessor):
             for _, row in df.iterrows():
                 try:
                     conn.execute(
-                        f"INSERT INTO {self.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, total_unit_cost, unit) "
-                        f"VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        f"INSERT INTO {self.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, unit) "
+                        f"VALUES (?, ?, ?, ?, ?, ?)",
                         (
                             row['internal_id'],
                             row['code'],
                             row['name'],
                             row['material_unit_cost'],
                             row['labor_unit_cost'],
-                            row['total_unit_cost'],
                             row.get('unit', '')
                         )
                     )
@@ -91,13 +92,15 @@ class FPSheetProcessor(BaseSheetProcessor):
             # Get values from fixed positions
             code_idx = self.column_mapping['code'] - 1  # Convert to 0-based
             name_idx = self.column_mapping['name'] - 1
-            material_idx = self.column_mapping['material_unit_cost'] - 1
-            labor_idx = self.column_mapping['labor_unit_cost'] - 1
+            material_unit_idx = self.column_mapping['material_unit_cost'] - 1
+            material_idx = self.column_mapping['material_cost'] - 1
+            labor_unit_idx = self.column_mapping['labor_unit_cost'] - 1
+            labor_idx = self.column_mapping['labor_cost'] - 1
             unit_idx = (self.column_mapping['unit'] - 1) if 'unit' in self.column_mapping else None
             
             # Extract values safely
             row_values = row.values
-            if len(row_values) <= max(code_idx, name_idx, material_idx, labor_idx):
+            if len(row_values) <= max(code_idx, name_idx, material_unit_idx, labor_unit_idx):
                 return None
             
             # Extract values exactly as they appear in Excel (no cleaning)
@@ -109,7 +112,9 @@ class FPSheetProcessor(BaseSheetProcessor):
                 return None
             
             # Convert cost values only
+            material_unit_cost = self._safe_float_conversion(row_values[material_unit_idx] if material_unit_idx < len(row_values) else 0)
             material_cost = self._safe_float_conversion(row_values[material_idx] if material_idx < len(row_values) else 0)
+            labor_unit_cost = self._safe_float_conversion(row_values[labor_unit_idx] if labor_unit_idx < len(row_values) else 0)
             labor_cost = self._safe_float_conversion(row_values[labor_idx] if labor_idx < len(row_values) else 0)
             unit = str(row_values[unit_idx]) if unit_idx is not None and unit_idx < len(row_values) and pd.notna(row_values[unit_idx]) else ''
             
@@ -117,9 +122,11 @@ class FPSheetProcessor(BaseSheetProcessor):
                 'internal_id': f"item_{uuid.uuid4().hex[:8]}",
                 'code': code,
                 'name': name,
-                'material_unit_cost': material_cost,
-                'labor_unit_cost': labor_cost,
-                'total_unit_cost': material_cost + labor_cost,
+                'material_unit_cost': material_unit_cost,
+                'material_cost': material_cost,
+                'labor_unit_cost': labor_unit_cost,
+                'labor_cost': labor_cost,
+                'total_cost': material_cost + labor_cost,
                 'unit': unit
             }
             
@@ -131,14 +138,16 @@ class FPSheetProcessor(BaseSheetProcessor):
         self.logger.warning(f"Duplicate item: Code='{new_item['code']}', Name='{new_item['name']}'")
         
         # Update if new item has costs and existing doesn't
-        if (new_item['material_unit_cost'] > 0 or new_item['labor_unit_cost'] > 0) and \
-           (existing_item['material_unit_cost'] == 0 and existing_item['labor_unit_cost'] == 0):
+        if (new_item['material_unit_cost'] > 0 or new_item['labor_unit_cost'] > 0 or new_item['material_cost'] > 0 or new_item['labor_cost']) and \
+           (existing_item['material_unit_cost'] == 0 and existing_item['labor_unit_cost'] == 0 and existing_item['material_cost'] == 0 and existing_item['labor_cost'] == 0):
             existing_item.update({
                 'material_unit_cost': new_item['material_unit_cost'],
+                'material_cost': new_item['material_cost'],
                 'labor_unit_cost': new_item['labor_unit_cost'],
-                'total_unit_cost': new_item['total_unit_cost']
+                'labor_cost': new_item['labor_cost'],
+                'total_cost': new_item['total_cost']
             })
-            self.logger.debug(f"Updated costs for duplicate: Material={new_item['material_unit_cost']}, Labor={new_item['labor_unit_cost']}")
+            self.logger.debug(f"Updated costs for duplicate: Material unit={new_item['material_unit_cost']}, Material={new_item['material_cost']}, Labor unit={new_item['labor_unit_cost']}, Labor ={new_item['labor_cost']}")
     
     def write_item_costs(self, worksheet, row: int, calculated_costs: Dict[str, float]) -> None:
         """Write calculated costs to worksheet row"""
@@ -146,8 +155,9 @@ class FPSheetProcessor(BaseSheetProcessor):
             # Map cost types to column positions
             cost_mapping = {
                 'material_unit_cost': self.column_mapping.get('material_unit_cost'),
+                'material_cost': self.column_mapping.get('material_cost'),
                 'labor_unit_cost': self.column_mapping.get('labor_unit_cost'),
-                'total_unit_cost': self.column_mapping.get('total_unit_cost'),
+                'labor_cost': self.column_mapping.get('labor_cost'),
                 'total_cost': self.column_mapping.get('total_cost')
             }
 
@@ -160,209 +170,253 @@ class FPSheetProcessor(BaseSheetProcessor):
             self.logger.error(f"Error writing costs to row {row}: {e}")
     
     
-    
-    def calculate_item_costs(self, master_item: Dict[str, Any], quantity: float) -> Dict[str, float]:
+    def calculate_item_costs(self, master_item: Dict[str, Any], quantity: float, similarity: float = 100) -> Dict[str, float]:
         """
-        Calculate costs for fire protection items.
-        FP logic: Both material and labor costs are multiplied by quantity
+        Calculate costs for interior items.
+        Interior logic: Material cost * quantity + Labor cost (not multiplied)
         """
-        mat_cost = float(master_item.get('material_cost', 0))
-        lab_cost = float(master_item.get('labor_cost', 0))
-        
-        # FP calculation: both material and labor * quantity
-        material_total = mat_cost * quantity
-        labor_total = lab_cost * quantity
-        total_cost = material_total + labor_total
-        
-        return {
-            'material_unit_cost': mat_cost,
-            'labor_unit_cost': lab_cost,
-            'material_total': material_total,
-            'labor_total': labor_total,
-            'total_cost': total_cost
-        }
-    
-    def find_section_structure(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
-        """Find section structure (boundaries only) for FP sheets - STUB IMPLEMENTATION"""
-        # TODO: Implement proper FP section structure detection
-        # For now, return a single main section to avoid errors
-        return {
-            'MAIN_SECTION': {
-                'total_row': None,
-                'start_row': 1,
-                'end_row': max_row,
-                'section_id': 'MAIN_SECTION'
+        # If similarity was too low, return "needs checking" values
+        if similarity < 50:
+            return {
+                'material_unit_cost': "ต้องตรวจสอบ",
+                'material_cost': "ต้องตรวจสอบ",
+                'labor_unit_cost': "ต้องตรวจสอบ",
+                'labor_cost': "ต้องตรวจสอบ",
+                'total_cost': "ต้องตรวจสอบ",
             }
+
+        mat_unit_cost = float(master_item.get('material_unit_cost', 0))
+        lab_unit_cost = float(master_item.get('labor_unit_cost', 0))
+        mat_cost = mat_unit_cost * quantity
+        lab_cost = lab_unit_cost * quantity
+          
+        total_cost =  mat_cost + lab_cost
+        
+        return {
+            'material_unit_cost': mat_unit_cost,
+            'material_cost': mat_cost,
+            'labor_unit_cost': lab_unit_cost,
+            'labor_cost': lab_cost,
+            'total_cost': total_cost
         }
     
     def find_section_boundaries(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
         """
-        DEPRECATED: Use find_section_structure() instead. Kept for backward compatibility.
+        DEPRECATED: Use find_section_structure() instead.
+        This method is kept for backward compatibility only.
+        """
+        return self.find_section_structure(worksheet, max_row)
+    
+    def find_section_structure(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
+        """
+        Find section structure (boundaries only, no cost calculation) for interior sheets.
+        Interior sheets often have simple 'Total' rows marking sections.
         """
         sections = {}
         name_col = self.column_mapping['name']
-        code_col = self.column_mapping['code']
+        total_row_col = self.column_mapping['total_row_col']
+        
+        self.logger.debug(f"Scanning electrical sheet for sections in column {total_row_col} (max_row={max_row})")
         
         # Scan for total rows
         for row_idx in range(1, max_row + 1):
-            code_cell = worksheet.cell(row=row_idx, column=code_col).value
+            total_cell = worksheet.cell(row=row_idx, column= total_row_col).value
             name_cell = worksheet.cell(row=row_idx, column=name_col).value
             
-            code_text = str(code_cell).strip() if code_cell else ""
+            total_text = str(total_cell).strip() if total_cell else ""
             name_text = str(name_cell).strip() if name_cell else ""
             
-            # Look for FP total patterns
-            if (code_text.lower() == 'total' or 
-                self._is_fp_total_row(code_text, name_text)):
-                
+            # Debug every row that has content in total_row_col
+            if total_text:
+                self.logger.debug(f"Row {row_idx} column {total_row_col}: '{total_text}' (checking for รวมรายการ)")
+            
+            # Look for 'Total' in code column
+            if 'รวมรายการ' in total_text.lower() or total_text.lower() == 'รวม':
                 # Get section info (ID and start row)
                 section_id, section_start_row = self._find_section_info(worksheet, row_idx, name_text)
-                
-                # Calculate section totals using range-based approach
-                section_totals = self.calculate_section_totals_from_range(
-                    worksheet, section_start_row, row_idx - 1
-                )
                 
                 sections[section_id] = {
                     'total_row': row_idx,
                     'start_row': section_start_row,
                     'end_row': row_idx - 1,
-                    'material_total': section_totals['material_total'],
-                    'labor_total': section_totals['labor_total'],
-                    'total_cost': section_totals['total_cost'],
-                    'item_count': section_totals['item_count']
+                    'section_id': section_id
                 }
                 
-                self.logger.debug(f"Found FP section '{section_id}' (rows {section_start_row}-{row_idx-1}) "
-                               f"with {section_totals['item_count']} items, total cost: {section_totals['total_cost']}")
+                self.logger.debug(f"Found interior section structure '{section_id}' (rows {section_start_row}-{row_idx-1})")
         
         # If no sections found, create a default main section
         if not sections:
-            sections['MAIN_FP'] = {
+            sections['MAIN_SECTION'] = {
                 'total_row': None,
                 'start_row': 1,
                 'end_row': max_row,
-                'material_total': 0,
-                'labor_total': 0,
-                'total_cost': 0,
-                'item_count': 0
+                'section_id': 'MAIN_SECTION'
             }
         
         return sections
     
     def _find_section_info(self, worksheet, total_row: int, section_name_from_total: str) -> Tuple[str, int]:
-        """Find the section ID and start row for FP sheets"""
-        code_col = self.column_mapping['code']
-        name_col = self.column_mapping['name']
+        """
+        Find the section ID and start row for a total row using method 2 only:
+        Find previous total row, section header = previous_total + 1
         
-        # METHOD 1: Search upward for matching code (fire protection sections)
-        if section_name_from_total:
-            for i in range(total_row - 1, max(1, total_row - 50), -1):
-                code_cell = worksheet.cell(row=i, column=code_col).value
-                code_text = str(code_cell).strip() if code_cell else ""
-                
-                if code_text == section_name_from_total:
-                    return section_name_from_total, i + 1
+        Returns: (section_id, section_start_row)
+        """
+        total_row_col = self.column_mapping['total_row_col']
         
         # METHOD 2: Find previous total, section header = previous_total + 1
         for i in range(total_row - 1, max(1, total_row - 100), -1):
-            code_cell = worksheet.cell(row=i, column=code_col).value
-            name_cell = worksheet.cell(row=i, column=name_col).value
+            check_code_cell = worksheet.cell(row=i, column=total_row_col).value
+            check_code_text = str(check_code_cell).strip() if check_code_cell else ""
             
-            code_text = str(code_cell).strip() if code_cell else ""
-            name_text = str(name_cell).strip() if name_cell else ""
-            
-            # Found another total row
-            if (code_text.lower() == 'total' or 
-                self._is_fp_total_row(code_text, name_text)):
+            # Found another total row using same pattern as find_section_structure
+            if 'รวมรายการ' in check_code_text.lower() or check_code_text.lower() == 'รวม':
                 section_header_row = i + 1
-                code_cell = worksheet.cell(row=section_header_row, column=code_col).value
+                code_cell = worksheet.cell(row=section_header_row, column=total_row_col).value
                 section_code = str(code_cell).strip() if code_cell else ""
                 if section_code:
-                    return section_code, section_header_row + 1
+                    return section_code, section_header_row + 1  # (section_id, start_row after header)
         
-        # FALLBACK: Use FP section naming
-        fallback_start = max(1, total_row - 20)
-        return section_name_from_total or f"FP_{total_row}", fallback_start
-    
-    def _is_fp_total_row(self, code_text: str, name_text: str) -> bool:
-        """Check if row is a fire protection total row"""
-        combined_text = f"{code_text} {name_text}".lower()
-        
-        # Look for FP-specific total indicators
-        fp_total_indicators = [
-            'total', 'รวม', 'รวมรายการ', 'subtotal', 'sum',
-            'fire total', 'fp total', 'fire protection total'
-        ]
-        
-        return any(indicator in combined_text for indicator in fp_total_indicators)
+        # FALLBACK: For first section, start from header row + 1
+        # If no previous total found, this is likely the first section
+        fallback_start = self.header_row + 1  # Start right after header
+        return section_name_from_total or f"FALLBACK{total_row}", fallback_start
     
     def calculate_section_totals_from_range(self, worksheet, start_row: int, end_row: int) -> Dict[str, float]:
-        """Calculate section totals for fire protection items"""
-        material_total = 0.0
-        labor_total = 0.0
-        total_cost = 0.0
+        """
+        Calculate section totals by iterating through the range and summing up all item costs.
+        This is more reliable than accumulation-based approach.
+        """
+        material_unit_cost_sum = 0.0
+        material_cost_sum = 0.0
+        labor_unit_cost_sum = 0.0
+        labor_cost_sum = 0.0
+        total_cost_sum = 0.0
         item_count = 0
         
         # Get column positions
+        mat_unit_col = self.column_mapping['material_unit_cost']
         mat_col = self.column_mapping['material_cost']
+        lab_unit_col = self.column_mapping['labor_unit_cost']
         lab_col = self.column_mapping['labor_cost']
         total_col = self.column_mapping['total_cost']
-        code_col = self.column_mapping['code']
+        total_row_col = self.column_mapping['total_row_col']
         
-        self.logger.debug(f"Calculating FP totals for range {start_row}-{end_row}")
+        self.logger.debug(f"Calculating totals for range {start_row}-{end_row}")
         
         # Sum up all items in the section range
         for row in range(start_row, end_row + 1):
-            # Skip headers and empty rows
-            code_cell = worksheet.cell(row=row, column=code_col).value
-            code_text = str(code_cell).strip() if code_cell else ""
+            # Skip if this looks like a header or empty row
+            total_row_cell = worksheet.cell(row=row, column=total_row_col).value
+            total_row_text = str(total_row_cell).strip() if total_row_cell else ""
             
-            # Skip section headers, empty rows, and FP system headers
-            if (not code_text or 
-                code_text.lower() in ['total', 'fire', 'fp', 'fire protection'] or
-                self._is_fp_section_header(code_text)):
+            # Skip only actual total rows, not empty code cells - use same pattern as find_section_structure
+            if 'รวมรายการ' in total_row_text.lower() or total_row_text.lower() == 'รวม':
                 continue
             
             # Get costs from each row
+            mat_unit_cell = worksheet.cell(row=row, column=mat_unit_col).value
             mat_cell = worksheet.cell(row=row, column=mat_col).value
+            lab_unit_cell = worksheet.cell(row=row, column=lab_unit_col).value
             lab_cell = worksheet.cell(row=row, column=lab_col).value
             total_cell = worksheet.cell(row=row, column=total_col).value
+
             
             # Convert to float safely
+            mat_unit_cost = self._safe_float(mat_unit_cell)
             mat_cost = self._safe_float(mat_cell)
+            lab_unit_cost = self._safe_float(lab_unit_cell)
             lab_cost = self._safe_float(lab_cell)
-            row_total = self._safe_float(total_cell)
+            total_cost = self._safe_float(total_cell)
             
-            # Only add if this row has actual costs
-            if mat_cost > 0 or lab_cost > 0 or row_total > 0:
-                material_total += mat_cost
-                labor_total += lab_cost
-                total_cost += row_total
+            # Only add if this row has actual costs (not header or empty rows)
+            if mat_unit_cost > 0 or lab_unit_cost > 0 or mat_cost > 0 or lab_cost > 0 or total_cost > 0:
+                material_unit_cost_sum += mat_unit_cost
+                material_cost_sum += mat_cost
+                labor_unit_cost_sum += lab_unit_cost
+                labor_cost_sum += lab_cost                
+                total_cost_sum += total_cost
                 item_count += 1
                 
-                self.logger.debug(f"Row {row} ({code_text}): Mat={mat_cost}, Lab={lab_cost}, Total={row_total}")
+                self.logger.debug(f"Row {row} ({total_row_text}): Mat unit={mat_unit_cost}, Lab unit={lab_unit_cost}, Mat={mat_cost}, Lab={lab_cost}, Total={total_cost}")
         
         return {
-            'material_total': material_total,
-            'labor_total': labor_total,
-            'total_cost': total_cost,
+            'material_unit_sum': material_unit_cost_sum,
+            'material_sum': material_cost_sum,
+            'labor_unit_sum': labor_unit_cost_sum,
+            'labor_sum': labor_cost_sum,
+            'total_sum': total_cost_sum,
             'item_count': item_count
         }
     
-    def _is_fp_section_header(self, code_text: str) -> bool:
-        """Check if code looks like a fire protection section header"""
-        fp_headers = [
-            'fire alarm', 'sprinkler', 'extinguisher', 'fire pump', 
-            'fire hose', 'fire cabinet', 'smoke detector', 'fire protection',
-            'manual pull', 'heat detector'
-        ]
+    def _safe_float(self, value) -> float:
+        """Safely convert value to float"""
+        try:
+            if value is None or value == '' or value == '-':
+                return 0.0
+            return float(value)
+        except (ValueError, TypeError):
+            return 0.0
+    
+    def write_section_totals(self, worksheet, sections: Dict[str, Dict[str, Any]], 
+                           markup_options: List[int], start_markup_col: int) -> None:
+        """
+        Write pre-calculated section totals to worksheet.
+        Totals are already calculated in find_section_boundaries using range-based approach.
+        """
+        self.logger.debug(f"write_section_totals called with {len(sections)} sections: {list(sections.keys())}")
         
-        code_lower = code_text.lower()
-        return any(header in code_lower for header in fp_headers)
+        for section_id, section_data in sections.items():
+            total_row = section_data.get('total_row')
+            if not total_row:
+                continue
+            
+            self.logger.debug(f"Writing pre-calculated totals for '{section_id}' at row {total_row}")
+            self.logger.debug(f"Section data keys: {list(section_data.keys())}")
+            
+            # Get pre-calculated sums
+            material_unit_sum = section_data.get('material_unit_sum', 0)
+            material_sum = section_data.get('material_sum', 0)
+            labor_unit_sum = section_data.get('labor_unit_sum', 0)
+            labor_sum = section_data.get('labor_sum', 0)
+            total_sum = section_data.get('total_sum', 0)
+            item_count = section_data.get('item_count', 0)
+
+             
+            self.logger.debug(f"Section '{section_id}': {item_count} items, "
+                           f"Material unit={material_unit_sum}, Labor unit={labor_unit_sum}, Material={material_sum}, Labor={labor_sum}, Total sum={total_sum}")
+            
+            # Write basic totals
+            mat_unit_col = self.column_mapping['material_unit_cost']
+            mat_col = self.column_mapping['material_cost']
+            lab_unit_col = self.column_mapping['labor_unit_cost']
+            lab_col = self.column_mapping['labor_cost']
+            total_col = self.column_mapping['total_cost']
+            
+            try:
+                self.logger.debug(f"Writing to cells: mat_unit=({total_row},{mat_unit_col}), mat=({total_row},{mat_col}), lab_unit=({total_row},{lab_unit_col}), lab=({total_row},{lab_col}), total=({total_row},{total_col})")
+                
+                worksheet.cell(row=total_row, column=mat_unit_col).value = material_unit_sum
+                worksheet.cell(row=total_row, column=mat_col).value = material_sum
+                worksheet.cell(row=total_row, column=lab_unit_col).value = labor_unit_sum
+                worksheet.cell(row=total_row, column=lab_col).value = labor_sum
+                worksheet.cell(row=total_row, column=total_col).value = total_sum
+                
+                self.logger.debug(f"Cell values written: mat_unit={material_unit_sum}, mat={material_sum}, lab_unit={labor_unit_sum}, lab={labor_sum}, total={total_sum}")
+                
+                # Write markup totals
+                self.write_markup_costs(worksheet, total_row, total_sum, 
+                                      markup_options, start_markup_col)
+                
+                self.logger.debug(f"Section '{section_id}' totals written successfully")
+                
+            except Exception as e:
+                self.logger.error(f"Error writing section totals for '{section_id}': {e}")
+                import traceback
+                self.logger.error(traceback.format_exc())
     
     def write_markup_costs(self, worksheet, row: int, base_cost: float, markup_options: List[int], start_col: int) -> None:
-        """Write markup costs for fire protection items"""
+        """Write markup costs for interior items"""
         for i, markup_percent in enumerate(markup_options):
             markup_rate = self.markup_rates.get(markup_percent, 1.0)
             markup_cost = round(base_cost * (1 + markup_rate), 2)
@@ -370,68 +424,10 @@ class FPSheetProcessor(BaseSheetProcessor):
             
             try:
                 worksheet.cell(row=row, column=col_num).value = markup_cost
-                self.logger.debug(f"Wrote FP markup {markup_percent}% = {markup_cost} to ({row}, {col_num})")
+                self.logger.debug(f"Wrote markup {markup_percent}% = {markup_cost} to ({row}, {col_num})")
             except Exception as e:
-                self.logger.error(f"Error writing FP markup to ({row}, {col_num}): {e}")
+                self.logger.error(f"Error writing markup to ({row}, {col_num}): {e}")
     
-    def add_sample_data(self) -> None:
-        """Add sample data for fire protection items"""
-        import sqlite3
-        
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            # Check if table already has data
-            cursor.execute(f"SELECT COUNT(*) FROM {self.table_name}")
-            count = cursor.fetchone()[0]
-            
-            if count > 0:
-                self.logger.debug(f"Table {self.table_name} already has {count} items")
-                return
-            
-            # Add sample fire protection items
-            sample_items = [
-                ('FP001', 'Smoke Detector - Photoelectric', 800, 200, 'EA'),
-                ('FP002', 'Fire Extinguisher - 10lb ABC', 1200, 100, 'EA'),
-                ('FP003', 'Fire Alarm Panel - 8 Zone', 5000, 1000, 'EA'),
-                ('FP004', 'Sprinkler Head - Standard', 300, 150, 'EA'),
-                ('FP005', 'Fire Hose - 50ft', 1500, 200, 'EA'),
-                ('FP006', 'Fire Cabinet - Steel', 2000, 400, 'EA'),
-                ('FP007', 'Fire Pump - 500 GPM', 15000, 3000, 'EA'),
-                ('FP008', 'Heat Detector - Fixed Temp', 600, 150, 'EA'),
-                ('FP009', 'Manual Pull Station', 400, 100, 'EA'),
-                ('FP010', 'Fire Pipe - 4 inch', 200, 100, 'M')
-            ]
-            
-            for i, (code, name, material_cost, labor_cost, unit) in enumerate(sample_items):
-                item_id = f"fp_sample_{i+1}"
-                total_cost = material_cost + labor_cost
-                
-                cursor.execute(
-                    f"INSERT INTO {self.table_name} (internal_id, code, name, material_cost, labor_cost, total_cost, unit) "
-                    f"VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (item_id, code, name, material_cost, labor_cost, total_cost, unit)
-                )
-            
-            conn.commit()
-            self.logger.debug(f"Added {len(sample_items)} sample items to {self.table_name}")
     
-    def ensure_costs_exist(self) -> None:
-        """Ensure table has items with costs"""
-        import sqlite3
-        
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            # Check if table has costs
-            cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_cost > 0 OR labor_cost > 0")
-            count = cursor.fetchone()[0]
-            
-            if count == 0:
-                self.logger.debug(f"No costs found in {self.table_name}, adding sample costs")
-                cursor.execute(f"UPDATE {self.table_name} SET material_cost = 600, labor_cost = 200, total_cost = 800")
-                conn.commit()
-                
-                cursor.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE material_cost > 0")
-                updated = cursor.fetchone()[0]
-                self.logger.debug(f"Added sample costs to {updated} items in {self.table_name}")
+    
+    
