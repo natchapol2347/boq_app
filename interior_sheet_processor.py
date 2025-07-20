@@ -357,8 +357,9 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                            markup_options: List[int], start_markup_col: int) -> None:
         """
         Write pre-calculated section totals to worksheet.
-        Totals are already calculated in find_section_boundaries using range-based approach.
         """
+        self.logger.debug(f"write_section_totals called with {len(sections)} sections: {list(sections.keys())}")
+        
         for section_id, section_data in sections.items():
             total_row = section_data.get('total_row')
             if not total_row:
@@ -371,11 +372,6 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             labor_unit_sum = section_data['labor_unit_sum']
             total_unit_sum = section_data['total_unit_sum']
             total_sum = section_data["total_sum"]
-            item_count = section_data['item_count']
-
-             
-            self.logger.debug(f"Section '{section_id}': {item_count} items, "
-                           f"Material unit={material_unit_sum}, Labor unit={labor_unit_sum}, Total unit={total_unit_sum}, Total sum={total_sum}")
             
             # Write basic totals
             mat_unit_col = self.column_mapping['material_unit_cost']
@@ -397,6 +393,52 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 
             except Exception as e:
                 self.logger.error(f"Error writing section totals for '{section_id}': {e}")
+        
+        # After all section totals are written, calculate and write grand total
+        self.write_grand_total_from_sections(worksheet, sections, markup_options, start_markup_col)
+    
+    def write_grand_total_from_sections(self, worksheet, sections: Dict[str, Dict[str, Any]], 
+                                      markup_options: List[int], start_markup_col: int) -> None:
+        """
+        Calculate grand total by reading total_cost values from section rows and write to รวมรายการ row.
+        """
+        try:
+            # Sum up total_cost from all section rows
+            grand_total_cost = 0
+            total_col = self.column_mapping['total_cost']  # Column I
+            
+            for section_id, section_data in sections.items():
+                total_row = section_data.get('total_row')
+                if total_row:
+                    # Read the total_cost value that we just wrote
+                    section_total = worksheet.cell(row=total_row, column=total_col).value or 0
+                    grand_total_cost += float(section_total)
+                    self.logger.debug(f"Section '{section_id}' total: {section_total}, Grand total so far: {grand_total_cost}")
+            
+            # Find รวมรายการ row in column L (8)
+            search_col = 8  # Column L
+            max_row = worksheet.max_row
+            
+            self.logger.debug(f"Searching for รวมรายการ in column {search_col} (Column L), grand total to write: {grand_total_cost}")
+            
+            for row_idx in range(1, max_row + 1):
+                cell_value = worksheet.cell(row=row_idx, column=search_col).value
+                if cell_value and 'รวมรายการ' in str(cell_value):
+                    self.logger.debug(f"Found grand total row at {row_idx}: '{cell_value}'")
+                    
+                    # Write only the grand total to total_cost column (I)
+                    worksheet.cell(row=row_idx, column=total_col).value = grand_total_cost
+                    
+                    # Write markup costs for grand total
+                    self.write_markup_costs(worksheet, row_idx, grand_total_cost, markup_options, start_markup_col)
+                    
+                    self.logger.debug(f"Grand total written: {grand_total_cost} to row {row_idx}, column {total_col}")
+                    return
+            
+            self.logger.debug("No grand total row found with รวมรายการ pattern")
+            
+        except Exception as e:
+            self.logger.error(f"Error writing grand total: {e}")
     
     def write_markup_costs(self, worksheet, row: int, base_cost: float, markup_options: List[int], start_col: int) -> None:
         """Write markup costs for interior items"""
