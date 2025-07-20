@@ -8,6 +8,12 @@ import pandas as pd
 import uuid
 from base_sheet_processor import BaseSheetProcessor
 import sqlite3
+from models import (
+    SystemColumnMapping,
+    ACItemData,
+    SystemCostCalculation,
+    SystemSectionTotals
+)
 
 class ACSheetProcessor(BaseSheetProcessor):
     """Processor for Air Conditioning (AC) sheets"""
@@ -21,19 +27,19 @@ class ACSheetProcessor(BaseSheetProcessor):
         return 5  # 0-based, row 6 in Excel
     
     @property
-    def column_mapping(self) -> Dict[str, int]:
-        return {
-            'code': 2,          # Column B
-            'name': 4,          # Column D
-            'total_row_col': 3,     #Column C (รวมรายการ is here)
-            'unit': 6,          # Column F
-            'quantity': 7,      # Column G
-            'material_unit_cost': 8, # Column H
-            'material_cost': 9, # Column I
-            'labor_unit_cost': 10,   # Column J
-            'labor_cost': 11, # Column K
-            'total_cost': 12,    # Column L
-        }
+    def column_mapping(self) -> SystemColumnMapping:
+        return SystemColumnMapping(
+            code=2,                  # Column B
+            name=4,                  # Column D
+            unit=6,                  # Column F
+            quantity=7,              # Column G
+            total_row_col=3,         # Column C (รวมรายการ is here)
+            material_unit_cost=8,    # Column H
+            material_cost=9,         # Column I
+            labor_unit_cost=10,      # Column J
+            labor_cost=11,           # Column K
+            total_cost=12            # Column L
+        )
     @property
     def table_name(self) -> str:
         return 'ac_items'
@@ -83,17 +89,19 @@ class ACSheetProcessor(BaseSheetProcessor):
             conn.commit()
             self.logger.debug(f"Synchronized {len(df)} items to {self.table_name}")
 
-    def extract_item_data(self, row: pd.Series) -> Optional[Dict[str, Any]]:
+    def extract_item_data(self, row: pd.Series) -> Optional[ACItemData]:
         """Extract item data from a row using column mapping"""
         try:
+            col_map = self.column_mapping
+            
             # Get values from fixed positions
-            code_idx = self.column_mapping['code'] - 1  # Convert to 0-based
-            name_idx = self.column_mapping['name'] - 1
-            material_unit_idx = self.column_mapping['material_unit_cost'] - 1
-            material_idx = self.column_mapping['material_cost'] - 1
-            labor_unit_idx = self.column_mapping['labor_unit_cost'] - 1
-            labor_idx = self.column_mapping['labor_cost'] - 1
-            unit_idx = (self.column_mapping['unit'] - 1) if 'unit' in self.column_mapping else None
+            code_idx = col_map.code - 1  # Convert to 0-based
+            name_idx = col_map.name - 1
+            material_unit_idx = col_map.material_unit_cost - 1
+            material_idx = col_map.material_cost - 1
+            labor_unit_idx = col_map.labor_unit_cost - 1
+            labor_idx = col_map.labor_cost - 1
+            unit_idx = col_map.unit - 1
             
             # Extract values safely
             row_values = row.values

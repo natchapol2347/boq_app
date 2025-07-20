@@ -9,6 +9,12 @@ import pandas as pd
 import uuid
 from base_sheet_processor import BaseSheetProcessor
 import sqlite3
+from models import (
+    InteriorColumnMapping,
+    InteriorItemData,
+    InteriorCostCalculation,
+    InteriorSectionTotals
+)
 
 
 class InteriorSheetProcessor(BaseSheetProcessor):
@@ -23,18 +29,16 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         return 9  # 0-based, row 10 in Excel
     
     @property
-    def column_mapping(self) -> Dict[str, int]:
-        return {
-            'code': 2,          # Column B
-            'name': 3,          # Column C
-            'quantity': 4,      # Column D
-            'unit': 5,          # Column E
-            'material_unit_cost': 6, # Column F
-            'labor_unit_cost': 7,    # Column G
-            'total_unit_cost': 8,    # Column H
-            "total_cost": 9 #Column I
-
-        }
+    def column_mapping(self) -> InteriorColumnMapping:
+        return InteriorColumnMapping(
+            code=2,               # Column B
+            name=3,               # Column C
+            quantity=4,           # Column D
+            unit=5,               # Column E
+            material_cost=6,      # Column F
+            labor_cost=7,         # Column G
+            total_cost=8          # Column H
+        )
     
     @property
     def table_name(self) -> str:
@@ -88,15 +92,17 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             conn.commit()
             self.logger.debug(f"Synchronized {len(df)} items to {self.table_name}")
 
-    def extract_item_data(self, row: pd.Series) -> Optional[Dict[str, Any]]:
+    def extract_item_data(self, row: pd.Series) -> Optional[InteriorItemData]:
         """Extract item data from a row using column mapping"""
         try:
+            col_map = self.column_mapping
+            
             # Get values from fixed positions
-            code_idx = self.column_mapping['code'] - 1  # Convert to 0-based
-            name_idx = self.column_mapping['name'] - 1
-            material_idx = self.column_mapping['material_unit_cost'] - 1
-            labor_idx = self.column_mapping['labor_unit_cost'] - 1
-            unit_idx = (self.column_mapping['unit'] - 1) if 'unit' in self.column_mapping else None
+            code_idx = col_map.code - 1  # Convert to 0-based
+            name_idx = col_map.name - 1
+            material_idx = col_map.material_cost - 1
+            labor_idx = col_map.labor_cost - 1
+            unit_idx = col_map.unit - 1
             
             # Extract values safely
             row_values = row.values
@@ -114,86 +120,77 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             # Convert cost values only
             material_cost = self._safe_float_conversion(row_values[material_idx] if material_idx < len(row_values) else 0)
             labor_cost = self._safe_float_conversion(row_values[labor_idx] if labor_idx < len(row_values) else 0)
-            unit = str(row_values[unit_idx]) if unit_idx is not None and unit_idx < len(row_values) and pd.notna(row_values[unit_idx]) else ''
+            unit = str(row_values[unit_idx]) if unit_idx < len(row_values) and pd.notna(row_values[unit_idx]) else ''
             
-            return {
-                'internal_id': f"item_{uuid.uuid4().hex[:8]}",
-                'code': code,
-                'name': name,
-                'material_unit_cost': material_cost,
-                'labor_unit_cost': labor_cost,
-                'total_unit_cost': material_cost + labor_cost,
-                'unit': unit
-            }
+            return InteriorItemData(
+                internal_id=f"item_{uuid.uuid4().hex[:8]}",
+                code=code,
+                name=name,
+                material_unit_cost=material_cost,
+                labor_unit_cost=labor_cost,
+                unit=unit
+            )
             
         except Exception as e:
             self.logger.error(f"Error extracting item data: {e}")
             return None
-    def handle_duplicate_item(self, existing_item: Dict[str, Any], new_item: Dict[str, Any]) -> None:
+    def handle_duplicate_item(self, existing_item: InteriorItemData, new_item: InteriorItemData) -> None:
         """Handle duplicate items by updating costs if new item has better data"""
-        self.logger.warning(f"Duplicate item: Code='{new_item['code']}', Name='{new_item['name']}'")
+        self.logger.warning(f"Duplicate item: Code='{new_item.code}', Name='{new_item.name}'")
         
         # Update if new item has costs and existing doesn't
-        if (new_item['material_unit_cost'] > 0 or new_item['labor_unit_cost'] > 0) and \
-           (existing_item['material_unit_cost'] == 0 and existing_item['labor_unit_cost'] == 0):
-            existing_item.update({
-                'material_unit_cost': new_item['material_unit_cost'],
-                'labor_unit_cost': new_item['labor_unit_cost'],
-                'total_unit_cost': new_item['total_unit_cost']
-            })
-            self.logger.debug(f"Updated costs for duplicate: Material={new_item['material_unit_cost']}, Labor={new_item['labor_unit_cost']}")
+        if (new_item.material_unit_cost > 0 or new_item.labor_unit_cost > 0) and \
+           (existing_item.material_unit_cost == 0 and existing_item.labor_unit_cost == 0):
+            existing_item.material_unit_cost = new_item.material_unit_cost
+            existing_item.labor_unit_cost = new_item.labor_unit_cost
+            self.logger.debug(f"Updated costs for duplicate: Material={new_item.material_unit_cost}, Labor={new_item.labor_unit_cost}")
     
-    def write_item_costs(self, worksheet, row: int, calculated_costs: Dict[str, float]) -> None:
+    def write_item_costs(self, worksheet, row: int, calculated_costs: InteriorCostCalculation) -> None:
         """Write calculated costs to worksheet row"""
         try:
-            # Map cost types to column positions
-            cost_mapping = {
-                'material_unit_cost': self.column_mapping.get('material_unit_cost'),
-                'labor_unit_cost': self.column_mapping.get('labor_unit_cost'),
-                'total_unit_cost': self.column_mapping.get('total_unit_cost'),
-                'total_cost': self.column_mapping.get('total_cost')
-            }
-
-            # Write each cost to its column
-            for cost_type, col_num in cost_mapping.items():
-                if col_num and cost_type in calculated_costs:
-                    worksheet.cell(row=row, column=col_num).value = calculated_costs[cost_type]
+            col_map = self.column_mapping
+            
+            # Write costs to their respective columns
+            worksheet.cell(row=row, column=col_map.material_cost).value = calculated_costs.material_unit_cost
+            worksheet.cell(row=row, column=col_map.labor_cost).value = calculated_costs.labor_unit_cost
+            worksheet.cell(row=row, column=col_map.total_cost).value = calculated_costs.total_cost
 
         except Exception as e:
             self.logger.error(f"Error writing costs to row {row}: {e}")
     
     
-    def calculate_item_costs(self, master_item: Dict[str, Any], quantity: float, similarity: float = 100) -> Dict[str, float]:
+    def calculate_item_costs(self, master_item: Dict[str, Any], quantity: float, similarity: float = 100) -> InteriorCostCalculation:
         """
         Calculate costs for interior items.
         Interior logic: Material cost * quantity + Labor cost (not multiplied)
         """
-        # If similarity was too low, return "needs checking" values
+        # For low similarity, we'll use 0 costs instead of text (Pydantic expects floats)
         if similarity < 50:
-            return {
-                'material_unit_cost': "ต้องตรวจสอบ",
-                'labor_unit_cost': "ต้องตรวจสอบ",
-                'total_unit_cost': "ต้องตรวจสอบ",
-                'total_cost': "ต้องตรวจสอบ"
-            }
+            return InteriorCostCalculation(
+                material_unit_cost=0.0,
+                labor_unit_cost=0.0,
+                material_unit_total=0.0,
+                labor_unit_total=0.0,
+                total_unit_cost=0.0,
+                total_cost=0.0
+            )
 
         mat_cost = float(master_item.get('material_unit_cost', 0))
         lab_cost = float(master_item.get('labor_unit_cost', 0))
-        
 
         material_unit_total = mat_cost 
         labor_unit_total = lab_cost   
         total_unit_cost = material_unit_total + labor_unit_total
         total_cost = total_unit_cost * quantity
         
-        return {
-            'material_unit_cost': mat_cost,
-            'labor_unit_cost': lab_cost,
-            'material_unit_total': material_unit_total,
-            'labor_unit_total': labor_unit_total,
-            'total_unit_cost': total_unit_cost,
-            'total_cost': total_cost
-        }
+        return InteriorCostCalculation(
+            material_unit_cost=mat_cost,
+            labor_unit_cost=lab_cost,
+            material_unit_total=material_unit_total,
+            labor_unit_total=labor_unit_total,
+            total_unit_cost=total_unit_cost,
+            total_cost=total_cost
+        )
     
     def find_section_boundaries(self, worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
         """
@@ -208,8 +205,9 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         Interior sheets often have simple 'Total' rows marking sections.
         """
         sections = {}
-        name_col = self.column_mapping['name']
-        code_col = self.column_mapping['code']
+        col_map = self.column_mapping
+        name_col = col_map.name
+        code_col = col_map.code
         
         # Scan for total rows
         for row_idx in range(1, max_row + 1):
@@ -252,7 +250,8 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         
         Returns: (section_id, section_start_row)
         """
-        code_col = self.column_mapping['code']
+        col_map = self.column_mapping
+        code_col = col_map.code
         
         # METHOD 1: Search upward for matching code
         # Total row has: Code="Total", Name="งานป้าย"
@@ -283,7 +282,7 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         fallback_start = self.header_row + 1  # Start right after header
         return section_name_from_total or f"FALLBACK{total_row}", fallback_start
     
-    def calculate_section_totals_from_range(self, worksheet, start_row: int, end_row: int) -> Dict[str, float]:
+    def calculate_section_totals_from_range(self, worksheet, start_row: int, end_row: int) -> InteriorSectionTotals:
         """
         Calculate section totals by iterating through the range and summing up all item costs.
         This is more reliable than accumulation-based approach.
@@ -295,11 +294,11 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         item_count = 0
         
         # Get column positions
-        mat_unit_col = self.column_mapping['material_unit_cost']
-        lab_unit_col = self.column_mapping['labor_unit_cost']
-        total_unit_col = self.column_mapping['total_unit_cost']
-        total_col = self.column_mapping['total_cost']
-        code_col = self.column_mapping['code']
+        col_map = self.column_mapping
+        mat_unit_col = col_map.material_cost
+        lab_unit_col = col_map.labor_cost
+        total_col = col_map.total_cost
+        code_col = col_map.code
         
         self.logger.debug(f"Calculating totals for range {start_row}-{end_row}")
         
@@ -316,18 +315,16 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             # Get costs from each row
             mat_unit_cell = worksheet.cell(row=row, column=mat_unit_col).value
             lab_unit_cell = worksheet.cell(row=row, column=lab_unit_col).value
-            total_unit_cell = worksheet.cell(row=row, column=total_unit_col).value
             total_cell = worksheet.cell(row=row, column=total_col).value
 
-            
             # Convert to float safely
             mat_unit_cost = self._safe_float(mat_unit_cell)
             lab_unit_cost = self._safe_float(lab_unit_cell)
-            total_unit_cost = self._safe_float(total_unit_cell)
             total_cost = self._safe_float(total_cell)
+            total_unit_cost = mat_unit_cost + lab_unit_cost  # Calculate from components
             
             # Only add if this row has actual costs (not header or empty rows)
-            if mat_unit_cost > 0 or lab_unit_cost > 0 or total_unit_cost > 0 or total_cost > 0:
+            if mat_unit_cost > 0 or lab_unit_cost > 0 or total_cost > 0:
                 material_unit_cost_sum += mat_unit_cost
                 labor_unit_cost_sum += lab_unit_cost
                 total_unit_cost_sum += total_unit_cost
@@ -336,13 +333,13 @@ class InteriorSheetProcessor(BaseSheetProcessor):
                 
                 self.logger.debug(f"Row {row} ({code_text}): Mat unit={mat_unit_cost}, Lab uit={lab_unit_cost}, Total unit={total_unit_cost}, Total={total_cost}")
         
-        return {
-            'material_unit_sum': material_unit_cost_sum,
-            'labor_unit_sum': labor_unit_cost_sum,
-            'total_unit_sum': total_unit_cost_sum,
-            'total_sum': total_cost_sum,
-            'item_count': item_count
-        }
+        return InteriorSectionTotals(
+            material_unit_sum=material_unit_cost_sum,
+            labor_unit_sum=labor_unit_cost_sum,
+            total_unit_sum=total_unit_cost_sum,
+            total_sum=total_cost_sum,
+            item_count=item_count
+        )
     
     def _safe_float(self, value) -> float:
         """Safely convert value to float"""
@@ -374,15 +371,14 @@ class InteriorSheetProcessor(BaseSheetProcessor):
             total_sum = section_data["total_sum"]
             
             # Write basic totals
-            mat_unit_col = self.column_mapping['material_unit_cost']
-            lab_unit_col = self.column_mapping['labor_unit_cost']
-            total_unit_col = self.column_mapping['total_unit_cost']
-            total_col = self.column_mapping['total_cost']
+            col_map = self.column_mapping
+            mat_unit_col = col_map.material_cost
+            lab_unit_col = col_map.labor_cost
+            total_col = col_map.total_cost
             
             try:
                 worksheet.cell(row=total_row, column=mat_unit_col).value = material_unit_sum
                 worksheet.cell(row=total_row, column=lab_unit_col).value = labor_unit_sum
-                worksheet.cell(row=total_row, column=total_unit_col).value = total_unit_sum
                 worksheet.cell(row=total_row, column=total_col).value = total_sum
                 
                 # Write markup totals
@@ -405,7 +401,8 @@ class InteriorSheetProcessor(BaseSheetProcessor):
         try:
             # Sum up total_cost from all section rows
             grand_total_cost = 0
-            total_col = self.column_mapping['total_cost']  # Column I
+            col_map = self.column_mapping
+            total_col = col_map.total_cost
             
             for section_id, section_data in sections.items():
                 total_row = section_data.get('total_row')
