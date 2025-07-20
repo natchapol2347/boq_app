@@ -234,7 +234,7 @@ class BaseSheetProcessor(ABC):
                 # Find match
                 match = self.find_best_match(name, code)
                 
-                if match and match['similarity'] >= 50:
+                if match:
                     processed_items.append({
                         'original_row_index': idx,
                         'row_code': code,
