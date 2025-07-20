@@ -299,6 +299,92 @@ class RefactoredBOQProcessor:
                 logging.error(f"Error generating final BOQ: {e}", exc_info=True)
                 return jsonify({'success': False, 'error': str(e)})
         
+        @self.app.route('/api/apply-markup', methods=['POST'])
+        def apply_markup_route():
+            """Apply markup directly to all values in all sheets (not just display columns)"""
+            data = request.get_json()
+            session_id = data.get('session_id')
+            markup_percent = data.get('markup_percent')
+            
+            if not session_id or session_id not in self.processing_sessions:
+                return jsonify({'success': False, 'error': 'Invalid session'})
+            
+            if markup_percent is None or not isinstance(markup_percent, (int, float)):
+                return jsonify({'success': False, 'error': 'markup_percent must be a valid number'})
+            
+            session_data = self.processing_sessions[session_id]['data']
+            original_filepath = session_data['original_filepath']
+            
+            try:
+                # Extract original filename without extension for better naming
+                original_name = os.path.splitext(os.path.basename(original_filepath))[0]
+                
+                # Generate output filename with markup percentage and original name
+                filename = f"{markup_percent}%_{original_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                output_filepath = os.path.join(self.output_folder, filename)
+                shutil.copy(original_filepath, output_filepath)
+                
+                # Open workbooks
+                workbook = openpyxl.load_workbook(output_filepath)
+                data_workbook = openpyxl.load_workbook(original_filepath, data_only=True)
+                
+                # Process each sheet with markup application flag
+                items_processed = 0
+                items_failed = 0
+                processing_summary = {}
+                
+                for sheet_name, sheet_info in session_data['sheets'].items():
+                    if sheet_name not in workbook.sheetnames:
+                        continue
+                    
+                    # Find the processor for this sheet
+                    processor = self._find_processor_for_sheet(sheet_name)
+                    if not processor:
+                        logging.warning(f"No processor found for sheet: {sheet_name}")
+                        continue
+                    
+                    logging.info(f"Applying {markup_percent}% markup to sheet: {sheet_name}")
+                    
+                    # Process the sheet with markup application flag
+                    sheet_result = processor.process_final_sheet(
+                        worksheet=workbook[sheet_name], 
+                        data_worksheet=data_workbook[sheet_name],
+                        sheet_info=sheet_info,
+                        markup_options=[],  # Empty list since we're applying markup, not displaying it
+                        apply_markup_percent=markup_percent  # New parameter
+                    )
+                    
+                    items_processed += sheet_result['items_processed']
+                    items_failed += sheet_result['items_failed']
+                    processing_summary[sheet_name] = sheet_result
+                
+                # Save workbook
+                workbook.save(output_filepath)
+                workbook.close()
+                data_workbook.close()
+                
+                # Cleanup
+                if os.path.exists(original_filepath):
+                    os.remove(original_filepath)
+                if session_id in self.processing_sessions:
+                    del self.processing_sessions[session_id]
+                
+                logging.info(f"Markup application complete: {markup_percent}% applied to {items_processed} items, {items_failed} failed")
+                
+                return jsonify({
+                    'success': True,
+                    'filename': filename,
+                    'download_url': f'/api/download/{filename}',
+                    'markup_percent': markup_percent,
+                    'items_processed': items_processed,
+                    'items_failed': items_failed,
+                    'processing_summary': processing_summary
+                })
+                
+            except Exception as e:
+                logging.error(f"Error applying markup: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
         @self.app.route('/api/download/<filename>')
         def download_file(filename):
             """Download generated BOQ file"""

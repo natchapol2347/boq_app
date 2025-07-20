@@ -78,9 +78,10 @@ def main():
         
         # Start the server
         print(f"🌐 Starting server on http://{args.host}:{args.port}")
-        print("📝 Use the same API endpoints as before:")
+        print("📝 Available API endpoints:")
         print("   POST /api/process-boq")
         print("   POST /api/generate-final-boq")
+        print("   POST /api/apply-markup")
         print("   GET  /api/download/<filename>")
         print("=" * 60)
         

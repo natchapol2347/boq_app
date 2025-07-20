@@ -286,7 +286,7 @@ class BaseSheetProcessor(ABC):
         return False
     
     #WORK4: have non interior sheet function for calculting columns such as material_total, labor_total (multiplied with qty)
-    def process_final_sheet(self, worksheet, data_worksheet, sheet_info: Dict[str, Any], markup_options: List[int]) -> Dict[str, Any]:
+    def process_final_sheet(self, worksheet, data_worksheet, sheet_info: Dict[str, Any], markup_options: List[int], apply_markup_percent: Optional[float] = None) -> Dict[str, Any]:
       """
       Process final sheet by applying costs to matched items and writing section totals.
       Uses pre-calculated matches and sections from sheet_info.
@@ -327,6 +327,12 @@ class BaseSheetProcessor(ABC):
                   similarity = match_data['similarity']
                   calculated_costs = self.calculate_item_costs(master_item, quantity, similarity)
 
+                  # Apply markup if requested
+                  if apply_markup_percent is not None:
+                      markup_multiplier = 1 + (apply_markup_percent / 100)
+                      for cost_key in calculated_costs:
+                          calculated_costs[cost_key] *= markup_multiplier
+
                   # Write costs to worksheet
                   self.write_item_costs(worksheet, row_index + self.header_row + 2, calculated_costs)
                   items_processed += 1
@@ -339,12 +345,18 @@ class BaseSheetProcessor(ABC):
           if sections:
               # Calculate totals from the now-filled worksheet
               sections_with_totals = self.calculate_section_totals(worksheet, sections)
-              start_markup_col = max(self.column_mapping.values()) + 2  # Start after main columns
               
-              # Write markup headers first
-              self.write_markup_headers(worksheet, markup_options, start_markup_col)
-              
-              self.write_section_totals(worksheet, sections_with_totals, markup_options, start_markup_col)
+              # Only write markup columns if not applying markup directly to values
+              if apply_markup_percent is None:
+                  start_markup_col = max(self.column_mapping.values()) + 2  # Start after main columns
+                  
+                  # Write markup headers first
+                  self.write_markup_headers(worksheet, markup_options, start_markup_col)
+                  
+                  self.write_section_totals(worksheet, sections_with_totals, markup_options, start_markup_col)
+              else:
+                  # When applying markup directly, just write regular totals without markup columns
+                  self.write_section_totals(worksheet, sections_with_totals, [], 0)
 
           self.logger.debug(f"Final sheet processing complete: {items_processed} processed, {items_failed} failed")
 
