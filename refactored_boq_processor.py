@@ -278,11 +278,8 @@ class RefactoredBOQProcessor:
                 workbook.close()
                 data_workbook.close()
                 
-                # Cleanup
-                if os.path.exists(original_filepath):
-                    os.remove(original_filepath)
-                if session_id in self.processing_sessions:
-                    del self.processing_sessions[session_id]
+                # Keep session alive for potential markup application
+                # No cleanup here - user might want to apply markup next
                 
                 logging.info(f"Processing complete: {items_processed} items processed, {items_failed} failed")
                 
@@ -363,11 +360,8 @@ class RefactoredBOQProcessor:
                 workbook.close()
                 data_workbook.close()
                 
-                # Cleanup
-                if os.path.exists(original_filepath):
-                    os.remove(original_filepath)
-                if session_id in self.processing_sessions:
-                    del self.processing_sessions[session_id]
+                # Keep session alive - user may want to apply different markup rates
+                # Session will be cleaned up when app closes or via cleanup-session endpoint
                 
                 logging.info(f"Markup application complete: {markup_percent}% applied to {items_processed} items, {items_failed} failed")
                 
@@ -383,6 +377,65 @@ class RefactoredBOQProcessor:
                 
             except Exception as e:
                 logging.error(f"Error applying markup: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
+        @self.app.route('/api/cleanup-session', methods=['POST'])
+        def cleanup_session_route():
+            """Cleanup session data and delete associated files"""
+            data = request.get_json()
+            session_id = data.get('session_id')
+            
+            if not session_id:
+                return jsonify({'success': False, 'error': 'session_id is required'})
+            
+            files_deleted = []
+            errors = []
+            
+            try:
+                # Get session data before deletion
+                if session_id in self.processing_sessions:
+                    session_data = self.processing_sessions[session_id]['data']
+                    original_filepath = session_data.get('original_filepath')
+                    
+                    # Delete original uploaded file
+                    if original_filepath and os.path.exists(original_filepath):
+                        try:
+                            os.remove(original_filepath)
+                            files_deleted.append(original_filepath)
+                            logging.info(f"Deleted original file: {original_filepath}")
+                        except Exception as e:
+                            errors.append(f"Failed to delete {original_filepath}: {e}")
+                    
+                    # Delete session from memory
+                    del self.processing_sessions[session_id]
+                    logging.info(f"Cleaned up session: {session_id}")
+                else:
+                    return jsonify({'success': False, 'error': 'Invalid session_id'})
+                
+                # Find and delete related output files (optional - files generated for this session)
+                # We'll look for files that might be related to this session's original filename
+                if original_filepath:
+                    original_basename = os.path.splitext(os.path.basename(original_filepath))[0]
+                    for output_file in os.listdir(self.output_folder):
+                        if original_basename in output_file:
+                            output_path = os.path.join(self.output_folder, output_file)
+                            try:
+                                os.remove(output_path)
+                                files_deleted.append(output_path)
+                                logging.info(f"Deleted output file: {output_path}")
+                            except Exception as e:
+                                errors.append(f"Failed to delete {output_path}: {e}")
+                
+                return jsonify({
+                    'success': True,
+                    'session_cleaned': True,
+                    'files_deleted': len(files_deleted),
+                    'deleted_files': files_deleted,
+                    'errors': errors
+                })
+                
+            except Exception as e:
+                logging.error(f"Error during cleanup: {e}", exc_info=True)
                 return jsonify({'success': False, 'error': str(e)})
         
         @self.app.route('/api/download/<filename>')

@@ -82,6 +82,7 @@ def main():
         print("   POST /api/process-boq")
         print("   POST /api/generate-final-boq")
         print("   POST /api/apply-markup")
+        print("   POST /api/cleanup-session")
         print("   GET  /api/download/<filename>")
         print("=" * 60)
         
