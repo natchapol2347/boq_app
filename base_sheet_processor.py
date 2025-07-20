@@ -17,9 +17,10 @@ from fuzzywuzzy import fuzz
 class BaseSheetProcessor(ABC):
     """Abstract base class for sheet processors"""
     
-    def __init__(self, db_path: str, markup_rates: Dict[int, float]):
+    def __init__(self, db_path: str, markup_rates: Dict[int, float], config: Optional[Any] = None):
         self.db_path = db_path
         self.markup_rates = markup_rates
+        self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
         
     @property

@@ -10,36 +10,46 @@ import uuid
 import sqlite3
 
 from base_sheet_processor import BaseSheetProcessor
+from models.config_models import SystemProcessorConfig
 
 class FPSheetProcessor(BaseSheetProcessor):
     """Processor for Fire Protection (FP) sheets"""
     
+    def __init__(self, db_path: str, markup_rates: Dict[int, float], config: Optional[SystemProcessorConfig] = None):
+        super().__init__(db_path, markup_rates, config)
+        # Use default values if no config provided
+        if config is None:
+            from models.config_models import ProcessorConfigs
+            default_configs = ProcessorConfigs.get_default_config()
+            self.config = default_configs.fp
+    
     @property
     def sheet_pattern(self) -> str:
-        return 'fp'
+        return self.config.sheet_pattern
     
     @property
     def header_row(self) -> int:
-        return 7  # 0-based, row 8 in Excel
+        return self.config.header_row
     
     @property
     def column_mapping(self) -> Dict[str, int]:
+        # Convert Pydantic model to dict for backward compatibility
         return {
-            'code': 2,          # Column B
-            'name': 4,          # Column D
-            'total_row_col': 3,     #Column C (รวมรายการ is here)
-            'unit': 6,          # Column F
-            'quantity': 7,      # Column G
-            'material_unit_cost': 8, # Column H
-            'material_cost': 9, # Column I
-            'labor_unit_cost': 10,   # Column J
-            'labor_cost': 11, # Column K
-            'total_cost': 12,    # Column L
+            'code': self.config.column_mapping.code,
+            'name': self.config.column_mapping.name,
+            'total_row_col': self.config.column_mapping.total_row_col,
+            'unit': self.config.column_mapping.unit,
+            'quantity': self.config.column_mapping.quantity,
+            'material_unit_cost': self.config.column_mapping.material_unit_cost,
+            'material_cost': self.config.column_mapping.material_cost,
+            'labor_unit_cost': self.config.column_mapping.labor_unit_cost,
+            'labor_cost': self.config.column_mapping.labor_cost,
+            'total_cost': self.config.column_mapping.total_cost
         }
     
     @property
     def table_name(self) -> str:
-        return 'fp_items'
+        return self.config.table_name
     def create_table(self, conn: sqlite3.Connection) -> None:
         """Create the database table for this sheet type"""
         cursor = conn.cursor()

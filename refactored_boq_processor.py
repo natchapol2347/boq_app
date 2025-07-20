@@ -23,6 +23,13 @@ from interior_sheet_processor import InteriorSheetProcessor
 from electrical_sheet_processor import ElectricalSheetProcessor
 from ac_sheet_processor import ACSheetProcessor
 from fp_sheet_processor import FPSheetProcessor
+from config_manager import ConfigManager
+from models.config_models import (
+    ProcessorType,
+    ConfigUpdateRequest,
+    ConfigInquiryResponse,
+    ConfigUpdateResponse
+)
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -51,12 +58,16 @@ class RefactoredBOQProcessor:
         # Markup rates
         self.markup_rates = {30: 0.30, 50: 0.50, 100: 1.00, 130: 1.30, 150: 1.50}
         
-        # Initialize sheet processors
+        # Configuration manager
+        self.config_manager = ConfigManager()
+        
+        # Initialize sheet processors with configuration
+        configs = self.config_manager.get_all_configs()
         self.sheet_processors = [
-            InteriorSheetProcessor(self.db_path, self.markup_rates),
-            ElectricalSheetProcessor(self.db_path, self.markup_rates),
-            ACSheetProcessor(self.db_path, self.markup_rates),
-            FPSheetProcessor(self.db_path, self.markup_rates)
+            InteriorSheetProcessor(self.db_path, self.markup_rates, configs.interior),
+            ElectricalSheetProcessor(self.db_path, self.markup_rates, configs.electrical),
+            ACSheetProcessor(self.db_path, self.markup_rates, configs.ac),
+            FPSheetProcessor(self.db_path, self.markup_rates, configs.fp)
         ]
         
         # Initialize database and sync master data
@@ -133,6 +144,20 @@ class RefactoredBOQProcessor:
             'data': data,
             'created_at': datetime.now()
         }
+    
+    def _reload_sheet_processors(self):
+        """Reload sheet processors with updated configuration"""
+        try:
+            configs = self.config_manager.get_all_configs()
+            self.sheet_processors = [
+                InteriorSheetProcessor(self.db_path, self.markup_rates, configs.interior),
+                ElectricalSheetProcessor(self.db_path, self.markup_rates, configs.electrical),
+                ACSheetProcessor(self.db_path, self.markup_rates, configs.ac),
+                FPSheetProcessor(self.db_path, self.markup_rates, configs.fp)
+            ]
+            logging.info("Sheet processors reloaded with updated configuration")
+        except Exception as e:
+            logging.error(f"Error reloading sheet processors: {e}", exc_info=True)
     
     def setup_routes(self):
         """Setup Flask routes"""
@@ -437,6 +462,61 @@ class RefactoredBOQProcessor:
             except Exception as e:
                 logging.error(f"Error during cleanup: {e}", exc_info=True)
                 return jsonify({'success': False, 'error': str(e)})
+        
+        @self.app.route('/api/config/inquiry', methods=['GET'])
+        def config_inquiry_route():
+            """Get current processor configurations"""
+            try:
+                configs = self.config_manager.get_all_configs()
+                summary = self.config_manager.get_config_summary()
+                
+                return ConfigInquiryResponse(
+                    success=True,
+                    configs=configs
+                ).model_dump()
+                
+            except Exception as e:
+                logging.error(f"Error getting config: {e}", exc_info=True)
+                return ConfigInquiryResponse(
+                    success=False,
+                    error=str(e)
+                ).model_dump()
+        
+        @self.app.route('/api/config/update', methods=['POST'])
+        def config_update_route():
+            """Update processor configuration"""
+            try:
+                data = request.get_json()
+                
+                # Validate request using Pydantic
+                update_request = ConfigUpdateRequest(**data)
+                
+                # Update configuration
+                success = self.config_manager.update_config(update_request)
+                
+                if success:
+                    # Reload sheet processors with new configuration
+                    self._reload_sheet_processors()
+                    
+                    return ConfigUpdateResponse(
+                        success=True,
+                        message="Configuration updated successfully",
+                        updated_processor=update_request.processor_name.value
+                    ).model_dump()
+                else:
+                    return ConfigUpdateResponse(
+                        success=False,
+                        message="Failed to update configuration",
+                        error="Update operation failed"
+                    ).model_dump()
+                    
+            except Exception as e:
+                logging.error(f"Error updating config: {e}", exc_info=True)
+                return ConfigUpdateResponse(
+                    success=False,
+                    message="Configuration update failed",
+                    error=str(e)
+                ).model_dump()
         
         @self.app.route('/api/download/<filename>')
         def download_file(filename):
