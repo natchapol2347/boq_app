@@ -6,6 +6,7 @@ Manages sheet processor configurations including column mappings and header rows
 
 import json
 import os
+import sys
 from typing import Optional
 from pathlib import Path
 import logging
@@ -24,10 +25,16 @@ class ConfigManager:
     def __init__(self, config_file_path: Optional[str] = None):
         self.logger = logging.getLogger(self.__class__.__name__)
         
-        # Default config file location
+        # Default config file location - use repo root structure
         if config_file_path is None:
-            self.config_dir = Path.home() / 'AppData' / 'Roaming' / 'BOQProcessor'
-            os.makedirs(self.config_dir, exist_ok=True)
+            # Use environment variable if set by launcher, otherwise use repo root
+            if getattr(sys, 'frozen', False):
+                app_root = Path(sys.executable).parent
+            else:
+                app_root = Path(__file__).parent.absolute()
+            
+            self.config_dir = Path(os.getenv('BOQ_CONFIG_DIR', app_root / 'config'))
+            self.config_dir.mkdir(exist_ok=True)
             self.config_file = self.config_dir / 'processor_config.json'
         else:
             self.config_file = Path(config_file_path)

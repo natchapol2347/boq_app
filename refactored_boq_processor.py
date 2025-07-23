@@ -16,6 +16,7 @@ from pathlib import Path
 import sqlite3
 import shutil
 import openpyxl
+import sys
 from typing import Dict, List, Any, Optional
 
 # Import the specialized processors
@@ -40,9 +41,24 @@ class RefactoredBOQProcessor:
         self.app = Flask(__name__)
         CORS(self.app)
         
-        # Setup directories
-        self.data_dir = Path.home() / 'AppData' / 'Roaming' / 'BOQProcessor'
-        os.makedirs(self.data_dir, exist_ok=True)
+        # Setup repo root directories (no more AppData!)
+        if getattr(sys, 'frozen', False):
+            # Running as packaged executable
+            self.app_root = Path(sys.executable).parent
+        else:
+            # Running as Python script
+            self.app_root = Path(__file__).parent.absolute()
+        
+        # Use environment variables if set by launcher, otherwise use repo paths
+        self.data_dir = Path(os.getenv('BOQ_DATA_DIR', self.app_root / 'data'))
+        self.config_dir = Path(os.getenv('BOQ_CONFIG_DIR', self.app_root / 'config'))
+        self.upload_folder = Path(os.getenv('BOQ_UPLOADS_DIR', self.app_root / 'uploads'))
+        self.output_folder = Path(os.getenv('BOQ_OUTPUT_DIR', self.app_root / 'output'))
+        
+        # Create directories if they don't exist
+        for directory in [self.data_dir, self.config_dir, self.upload_folder, self.output_folder]:
+            directory.mkdir(exist_ok=True)
+        
         self.db_path = str(self.data_dir / 'master_data.db')
         
         # Session management

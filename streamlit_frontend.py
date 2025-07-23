@@ -17,6 +17,7 @@ import streamlit as st
 import requests
 import json
 import os
+import sys
 import subprocess
 import platform
 from pathlib import Path
@@ -25,7 +26,15 @@ from typing import Dict, Any, Optional
 
 # Configuration
 BACKEND_URL = "http://localhost:5000"
-OUTPUT_FOLDER = Path("output")
+
+# Use repo root structure
+if getattr(sys, 'frozen', False):
+    APP_ROOT = Path(sys.executable).parent
+else:
+    APP_ROOT = Path(__file__).parent.absolute()
+
+OUTPUT_FOLDER = Path(os.getenv('BOQ_OUTPUT_DIR', APP_ROOT / "output"))
+OUTPUT_FOLDER.mkdir(exist_ok=True)
 
 # Language Configuration
 LANGUAGES = {

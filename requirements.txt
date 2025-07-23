@@ -66,3 +66,10 @@ yarl==1.18.3
 zipp==3.21.0
 streamlit>=1.28.0
 requests>=2.25.0
+flask>=2.0.0
+flask-cors>=3.0.0
+werkzeug>=2.0.0
+openpyxl>=3.0.0
+pandas>=1.5.0
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.12.0
