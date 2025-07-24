@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Refactored BOQ Processor - Main application class that orchestrates all sheet processors.
-CLEANED VERSION: Removed summary logic, moved total writing to processors.
-"""
 
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -33,26 +29,37 @@ from models.config_models import (
 
 logging.basicConfig(level=logging.DEBUG)
 
-class RefactoredBOQProcessor:
+class BOQProcessor:
     """Main BOQ processor that orchestrates all sheet-specific processors"""
     
     def __init__(self):
         self.app = Flask(__name__)
         CORS(self.app)
         
-        # Setup directories
-        self.data_dir = Path.home() / 'AppData' / 'Roaming' / 'BOQProcessor'
+        # Setup directories - repo root only
+        self.app_root = Path(__file__).parent.absolute()
+        
+        # Database in repo root data folder
+        self.data_dir = self.app_root / 'data'
         os.makedirs(self.data_dir, exist_ok=True)
         self.db_path = str(self.data_dir / 'master_data.db')
         
         # Session management
         self.processing_sessions = {}
         
-        # Folder setup
-        self.master_data_folder = 'master_data'
-        self.upload_folder = 'uploads'
-        self.output_folder = 'output'
-        for folder in [self.master_data_folder, self.upload_folder, self.output_folder]:
+        # Folder setup - all in repo root
+        self.master_data_folder = str(self.app_root / 'master_data')
+        self.upload_folder = str(self.app_root / 'uploads')
+        self.output_folder = str(self.app_root / 'output')
+        
+        # Create all necessary directories
+        folders = [
+            self.master_data_folder, 
+            self.upload_folder, 
+            self.output_folder,
+            str(self.data_dir)
+        ]
+        for folder in folders:
             os.makedirs(folder, exist_ok=True)
         
         # Markup rates
@@ -532,5 +539,5 @@ class RefactoredBOQProcessor:
         self.app.run(host=host, port=port, debug=debug)
 
 if __name__ == '__main__':
-    processor = RefactoredBOQProcessor()
+    processor = BOQProcessor()
     processor.run()

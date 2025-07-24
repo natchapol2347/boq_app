@@ -24,9 +24,10 @@ class ConfigManager:
     def __init__(self, config_file_path: Optional[str] = None):
         self.logger = logging.getLogger(self.__class__.__name__)
         
-        # Default config file location
+        # Default config file location - repo root instead of AppData
         if config_file_path is None:
-            self.config_dir = Path.home() / 'AppData' / 'Roaming' / 'BOQProcessor'
+            self.app_root = Path(__file__).parent.absolute()
+            self.config_dir = self.app_root / 'config'
             os.makedirs(self.config_dir, exist_ok=True)
             self.config_file = self.config_dir / 'processor_config.json'
         else:

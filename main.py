@@ -65,10 +65,10 @@ def main():
         print("=" * 60)
         
         # Import the refactored processor
-        from refactored_boq_processor import RefactoredBOQProcessor
+        from boq_processor import BOQProcessor
         
         # Create and configure processor
-        processor = RefactoredBOQProcessor()
+        processor = BOQProcessor()
         
         # Add sample data if requested
         if args.add_sample_data:

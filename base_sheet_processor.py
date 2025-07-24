@@ -4,14 +4,12 @@ Base sheet processor class that defines the interface for all sheet processors.
 This provides common functionality and structure for specific sheet implementations.
 """
 
-import fuzzywuzzy
+
 import pandas as pd
 import sqlite3
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, Tuple
-import uuid
-import re
+from typing import Dict, Any, Optional, List
 from fuzzywuzzy import fuzz
 
 class BaseSheetProcessor(ABC):

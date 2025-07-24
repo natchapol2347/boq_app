@@ -6,7 +6,9 @@ __pycache__/
 # C extensions
 *.so
 /output
-*.DS_Store
+/data
+/temp_uploads
+.DS_Store
 # Distribution / packaging
 .Python
 build/
@@ -209,3 +211,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Ignore all .xlsx files
+*.xlsx
+
+# But keep master_data.xlsx
+!master_data/master.xlsx
