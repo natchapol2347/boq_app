@@ -1,0 +1,50 @@
+# docker-compose.yml
+
+services:
+  boq-backend:
+    build: 
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: boq-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./master_data:/app/master_data
+      - ./output:/app/output
+      - ./config:/app/config
+      - ./data:/app/data
+    environment:
+      - FLASK_ENV=production
+      - PYTHONPATH=/app
+    restart: unless-stopped
+    networks:
+      - boq-network
+
+  boq-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: boq-frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./output:/app/output  # Share output folder
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - BACKEND_URL=http://boq-backend:5000 
+
+    depends_on:
+      - boq-backend
+    restart: unless-stopped
+    networks:
+      - boq-network
+
+networks:
+  boq-network:
+    driver: bridge
+
+volumes:
+  boq-data:
+    driver: local

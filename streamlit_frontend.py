@@ -1,33 +1,31 @@
 #!/usr/bin/env python3
 """
-Streamlit Frontend for BOQ Processor
-A lightweight web interface for the BOQ processing backend application.
-
-Usage:
-1. First, start your backend server:
-   python main.py
-
-2. Then, in a separate terminal, start this frontend:
-   streamlit run streamlit_frontend.py
-
-This keeps your backend and frontend completely separate for better architecture.
+Streamlit Frontend for BOQ Processor with Download Links
+Works perfectly in Docker containers - no folder opening issues!
 """
 
 import streamlit as st
 import requests
 import json
 import os
-import subprocess
 import platform
 from pathlib import Path
 import time
 from typing import Dict, Any, Optional
+from datetime import datetime
 
-# Configuration
-BACKEND_URL = "http://localhost:5000"
+# Configuration - Docker network aware
+def get_backend_url():
+    """Get backend URL based on environment"""
+    if os.getenv('STREAMLIT_SERVER_HEADLESS') == 'true':
+        return "http://boq-backend:5000"  # Docker container name
+    else:
+        return "http://localhost:5000"   # Local development
+
+BACKEND_URL = get_backend_url()
 OUTPUT_FOLDER = Path("output")
 
-# Language Configuration
+# Language Configuration (keeping your existing languages dict)
 LANGUAGES = {
     'th': {
         'name': '🇹🇭 ไทย',
@@ -35,15 +33,7 @@ LANGUAGES = {
         'subtitle': 'ระบบคำนวณต้นทุนและมาร์คอัปอัตโนมัติ',
         'backend_connected': '🟢 เชื่อมต่อแบ็กเอนด์สำเร็จ',
         'backend_error': '🔴 **แบ็กเอนด์ไม่ทำงาน**',
-        'backend_instruction': '''
-        กรุณาเริ่มเซิร์ฟเวอร์แบ็กเอนด์ก่อน:
-        
-        ```bash
-        python main.py
-        ```
-        
-        แล้วรีเฟรชหน้านี้
-        ''',
+        'backend_instruction': '''กรุณาเริ่มเซิร์ฟเวอร์แบ็กเอนด์ก่อน: `python main.py`''',
         'settings': '⚙️ ตั้งค่า',
         'settings_tooltip': 'ตั้งค่าระบบประมวลผล',
         'step1_title': '📁 ขั้นตอนที่ 1: อัปโหลดไฟล์ BOQ',
@@ -62,7 +52,6 @@ LANGUAGES = {
         'generate_success': '✅ สร้าง BOQ สุดท้ายแล้ว: **{}**',
         'generate_failed': '❌ สร้างล้มเหลว: {}',
         'items_processed': '📊 ประมวลผล {} รายการ, ล้มเหลว {} รายการ',
-        'open_folder': '📁 เปิดโฟลเดอร์ผลลัพธ์',
         'step3_title': '💰 ขั้นตอนที่ 3: ใส่มาร์คอัป (ตัวเลือก)',
         'markup_desc': 'เลือกเปอร์เซ็นต์มาร์คอัปที่จะใส่ในต้นทุนทั้งหมด:',
         'markup_multiplier': 'ตัวคูณมาร์คอัป: **{:.2f}x**',
@@ -85,12 +74,10 @@ LANGUAGES = {
         'clear_failed': 'ล้างหน่วยความจำล้มเหลว: {}',
         'footer': 'ระบบประมาณราคา BOQ v2.0 | Streamlit Frontend',
         'back_main': '🔙 กลับหน้าหลัก',
-        'folder_opened': 'เปิดโฟลเดอร์: {}',
-        'folder_error': 'เปิดโฟลเดอร์ล้มเหลว: {}',
-        'folder_not_exist': 'ไม่พบโฟลเดอร์: {}',
-        'loading_config': 'กำลังโหลดการตั้งค่าปัจจุบัน...',
-        'config_load_failed': 'โหลดการตั้งค่าล้มเหลว: {}',
-        'config_title': '⚙️ การตั้งค่าระบบประมวลผล',
+        'recent_files': '📥 ไฟล์ล่าสุด:',
+        'download': '⬇️ ดาวน์โหลด',
+        'no_files_found': 'ไม่พบไฟล์ในโฟลเดอร์ผลลัพธ์',
+        'files_saved_to': '📁 ไฟล์ถูกบันทึกที่: {}',
         'total_items': 'รายการทั้งหมด',
         'matched_items': 'รายการที่จับคู่ได้',
         'match_rate': 'อัตราการจับคู่',
@@ -102,15 +89,7 @@ LANGUAGES = {
         'subtitle': 'Automated Bill of Quantities cost calculation and markup application',
         'backend_connected': '🟢 Backend Connected',
         'backend_error': '🔴 **Backend Server Not Running**',
-        'backend_instruction': '''
-        Please start the backend server first:
-        
-        ```bash
-        python main.py
-        ```
-        
-        Then refresh this page.
-        ''',
+        'backend_instruction': '''Please start the backend server first: `python main.py`''',
         'settings': '⚙️ Settings',
         'settings_tooltip': 'Configure processor settings',
         'step1_title': '📁 Step 1: Upload BOQ File',
@@ -129,7 +108,6 @@ LANGUAGES = {
         'generate_success': '✅ Final BOQ generated: **{}**',
         'generate_failed': '❌ Generation failed: {}',
         'items_processed': '📊 Processed {} items, {} failed',
-        'open_folder': '📁 Open Output Folder',
         'step3_title': '💰 Step 3: Apply Markup (Optional)',
         'markup_desc': 'Select markup percentage to apply to all costs:',
         'markup_multiplier': 'Markup multiplier: **{:.2f}x**',
@@ -152,12 +130,10 @@ LANGUAGES = {
         'clear_failed': 'Failed to clear memory: {}',
         'footer': 'BOQ Processor v2.0 | Streamlit Frontend',
         'back_main': '🔙 Back to Main',
-        'folder_opened': 'Opened folder: {}',
-        'folder_error': 'Failed to open folder: {}',
-        'folder_not_exist': 'Folder does not exist: {}',
-        'loading_config': 'Loading current configuration...',
-        'config_load_failed': 'Failed to load configuration: {}',
-        'config_title': '⚙️ Processor Configuration Settings',
+        'recent_files': '📥 Recent Files:',
+        'download': '⬇️ Download',
+        'no_files_found': 'No files found in output folder',
+        'files_saved_to': '📁 Files saved to: {}',
         'total_items': 'Total Items',
         'matched_items': 'Matched Items',
         'match_rate': 'Match Rate',
@@ -170,7 +146,6 @@ def get_text(key: str) -> str:
     lang = st.session_state.get('language', 'th')
     return LANGUAGES[lang].get(key, key)
 
-# Check if backend is running
 def check_backend_connection():
     """Check if backend server is accessible"""
     try:
@@ -242,43 +217,116 @@ class BOQProcessorAPI:
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
-    def update_config(self, processor_name: str, header_row: Optional[int] = None, 
-                     column_mapping: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
-        """Update processor configuration"""
-        data = {'processor_name': processor_name}
-        
-        if header_row is not None:
-            data['header_row'] = header_row
-        if column_mapping is not None:
-            data['column_mapping'] = column_mapping
-        
+    def download_file(self, filename: str):
+        """Download file from backend and return content"""
         try:
-            response = requests.post(f"{self.base_url}/api/config/update", json=data)
-            return response.json()
+            response = requests.get(f"{self.base_url}/api/download/{filename}", timeout=30)
+            if response.status_code == 200:
+                return response.content
+            return None
         except Exception as e:
-            return {'success': False, 'error': str(e)}
+            # Don't show error to user, just return None
+            return None
 
-
-def open_folder(folder_path: Path):
-    """Open folder in system file explorer"""
+def show_download_links(folder_path: Path, latest_filename: str = None):
+    """Show download links for generated files - Save button only"""
     try:
-        folder_path = folder_path.resolve()
-        if not folder_path.exists():
-            st.error(get_text('folder_not_exist').format(folder_path))
-            return
+        st.write("---")
+        st.subheader(get_text('recent_files'))
         
-        system = platform.system()
-        if system == "Windows":
-            os.startfile(folder_path)
-        elif system == "Darwin":  # macOS
-            subprocess.run(["open", folder_path])
-        else:  # Linux
-            subprocess.run(["xdg-open", folder_path])
-            
-        st.success(get_text('folder_opened').format(folder_path))
+        # Try to list files in the output folder
+        files_found = []
+        if folder_path.exists():
+            files_found = list(folder_path.glob("*.xlsx"))
+            # Sort by modification time (newest first) and limit to 3
+            files_found = sorted(files_found, key=lambda x: x.stat().st_mtime, reverse=True)[:3]
+        
+        # If we have a latest filename from the API, prioritize it
+        if latest_filename:
+            st.write("**🎯 Latest Generated File:**")
+            show_single_download_link(latest_filename, folder_path / latest_filename if folder_path.exists() else None, is_latest=True)
+            st.write("")
+        
+        # Show other recent files (max 3, excluding the latest if already shown)
+        if files_found:
+            st.write("**📋 Recent Files:**")
+            count = 0
+            for file in files_found:
+                # Skip if this is the latest file we already showed
+                if latest_filename and file.name == latest_filename:
+                    continue
+                
+                if count < 3:  # Limit to 3 files
+                    show_single_download_link(file.name, file_path=file)
+                    count += 1
+                    
+        # Show folder location for reference
+        st.write("")
+        st.info(get_text('files_saved_to').format(folder_path))
+        
     except Exception as e:
-        st.error(get_text('folder_error').format(e))
+        st.error(f"Error accessing files: {e}")
+        # Fallback: show at least the latest file if we have it
+        if latest_filename:
+            show_single_download_link(latest_filename, folder_path / latest_filename if folder_path.exists() else None, is_latest=True)
 
+def show_single_download_link(filename: str, file_path: Path = None, is_latest: bool = False):
+    """Show a single download link - Save button only, no section collapse"""
+    try:
+        # Create columns for file info and download button
+        col1, col2 = st.columns([4, 1])
+        
+        with col1:
+            # Show file info
+            if file_path and file_path.exists():
+                file_size = file_path.stat().st_size / 1024 / 1024  # MB
+                mod_time = datetime.fromtimestamp(file_path.stat().st_mtime)
+                st.write(f"📄 {filename}")
+                st.caption(f"Size: {file_size:.1f} MB | Modified: {mod_time.strftime('%Y-%m-%d %H:%M')}")
+            else:
+                st.write(f"📄 {filename}")
+                if is_latest:
+                    st.caption("✨ Just generated")
+                else:
+                    st.caption("API only")
+        
+        with col2:
+            # Only Save button - always try to provide download
+            if file_path and file_path.exists():
+                # File exists locally - use Streamlit download
+                try:
+                    with open(file_path, "rb") as f:
+                        st.download_button(
+                            label="💾 Save",
+                            data=f.read(),
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"download_{filename}_{int(time.time())}",  # Unique key to prevent conflicts
+                            help="Download file"
+                        )
+                except Exception as e:
+                    st.caption("Download error")
+            else:
+                # File doesn't exist locally - try API download and provide as Streamlit download
+                try:
+                    api = BOQProcessorAPI()
+                    file_content = api.download_file(filename)
+                    if file_content:
+                        st.download_button(
+                            label="💾 Save",
+                            data=file_content,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"api_download_{filename}_{int(time.time())}",  # Unique key
+                            help="Download via API"
+                        )
+                    else:
+                        st.caption("Unavailable")
+                except Exception as e:
+                    st.caption("Download failed")
+                
+    except Exception as e:
+        st.error(f"Error showing download link: {e}")
 
 def show_processing_summary(summary: Dict[str, Any]):
     """Display processing summary in a nice format"""
@@ -295,334 +343,7 @@ def show_processing_summary(summary: Dict[str, Any]):
         st.metric(get_text('match_rate'), f"{summary.get('match_rate', 0):.1f}%")
     with col4:
         st.metric(get_text('sheets_processed'), summary.get('sheets_processed', 0))
-
-
-def show_settings_page():
-    """Display the settings configuration page"""
-    st.header(get_text('config_title'))
-    
-    # Initialize API client
-    api = BOQProcessorAPI()
-    
-    # Get current configuration
-    with st.spinner(get_text('loading_config')):
-        config_response = api.get_config()
-    
-    if not config_response.get('success', False):
-        st.error(get_text('config_load_failed').format(config_response.get('error', 'Unknown error')))
-        return
-    
-    configs = config_response.get('configs', {})
-    
-    # Create tabs for different processor types
-    processor_types = ['interior', 'electrical', 'ac', 'fp']
-    tab_labels = {
-        'th': ['ตกแต่งภายใน (INT)', 'ไฟฟ้า (EE)', 'แอร์ (AC)', 'ดับเพลิง (FP)'],
-        'en': ['Interior (INT)', 'Electrical (EE)', 'AC System', 'Fire Protection (FP)']
-    }
-    
-    current_lang = st.session_state.get('language', 'th')
-    tabs = st.tabs(tab_labels[current_lang])
-    
-    for i, processor_type in enumerate(processor_types):
-        with tabs[i]:
-            processor_config = configs.get(processor_type, {})
-            
-            if not processor_config:
-                st.warning(f"No configuration found for {processor_type} processor")
-                continue
-            
-            st.subheader(f"{processor_type.upper()} Processor Settings")
-            
-            # Display current settings
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**Current Settings:**" if current_lang == 'en' else "**การตั้งค่าปัจจุบัน:**")
-                st.write(f"- Sheet Pattern: `{processor_config.get('sheet_pattern', 'N/A')}`")
-                st.write(f"- Header Row: `{processor_config.get('header_row', 'N/A')}`")
-                st.write(f"- Table Name: `{processor_config.get('table_name', 'N/A')}`")
-            
-            with col2:
-                st.write("**Column Mapping:**" if current_lang == 'en' else "**การแมปคอลัมน์:**")
-                column_mapping = processor_config.get('column_mapping', {})
-                for key, value in column_mapping.items():
-                    thai_labels = {
-                        'code': 'รหัส',
-                        'name': 'ชื่อ',
-                        'unit': 'หน่วย',
-                        'quantity': 'จำนวน',
-                        'material_unit_cost': 'ต้นทุนวัสดุต่อหน่วย',
-                        'labor_unit_cost': 'ต้นทุนแรงงานต่อหน่วย',
-                        'total_unit_cost': 'ต้นทุนรวมต่อหน่วย',
-                        'total_cost': 'ต้นทุนรวม',
-                        'total_row_col': 'คอลัมน์แถวรวม',
-                        'material_cost': 'ต้นทุนวัสดุ',
-                        'labor_cost': 'ต้นทุนแรงงาน'
-                    }
-                    label = thai_labels.get(key, key) if current_lang == 'th' else key
-                    st.write(f"- {label}: Column {value}")
-            
-            # Update form
-            with st.form(f"update_{processor_type}_config"):
-                st.write("**Update Configuration:**" if current_lang == 'en' else "**อัปเดตการตั้งค่า:**")
-                
-                # Header row input
-                header_label = "Header Row (0-based)" if current_lang == 'en' else "แถวหัวตาราง (เริ่มต้นที่ 0)"
-                new_header_row = st.number_input(
-                    header_label,
-                    min_value=0,
-                    max_value=100,
-                    value=processor_config.get('header_row', 0),
-                    key=f"{processor_type}_header_row"
-                )
-                
-                # Column mapping inputs
-                mapping_title = "**Column Mapping:**" if current_lang == 'en' else "**การแมปคอลัมน์:**"
-                st.write(mapping_title)
-                col_map_cols = st.columns(2)
-                
-                new_column_mapping = {}
-                
-                # Get current column mapping for default values
-                current_mapping = processor_config.get('column_mapping', {})
-                
-                # Common columns for all processors
-                with col_map_cols[0]:
-                    code_label = "Code Column" if current_lang == 'en' else "คอลัมน์รหัส"
-                    name_label = "Name Column" if current_lang == 'en' else "คอลัมน์ชื่อ"
-                    unit_label = "Unit Column" if current_lang == 'en' else "คอลัมน์หน่วย"
-                    qty_label = "Quantity Column" if current_lang == 'en' else "คอลัมน์จำนวน"
-                    
-                    new_column_mapping['code'] = st.number_input(
-                        code_label, min_value=1, max_value=100,
-                        value=current_mapping.get('code', 2),
-                        key=f"{processor_type}_code_col"
-                    )
-                    new_column_mapping['name'] = st.number_input(
-                        name_label, min_value=1, max_value=100,
-                        value=current_mapping.get('name', 3),
-                        key=f"{processor_type}_name_col"
-                    )
-                    new_column_mapping['unit'] = st.number_input(
-                        unit_label, min_value=1, max_value=100,
-                        value=current_mapping.get('unit', 5),
-                        key=f"{processor_type}_unit_col"
-                    )
-                    new_column_mapping['quantity'] = st.number_input(
-                        qty_label, min_value=1, max_value=100,
-                        value=current_mapping.get('quantity', 4),
-                        key=f"{processor_type}_quantity_col"
-                    )
-                
-                with col_map_cols[1]:
-                    # Processor-specific columns
-                    if processor_type == 'interior':
-                        mat_unit_label = "Material Unit Cost" if current_lang == 'en' else "ต้นทุนวัสดุต่อหน่วย"
-                        lab_unit_label = "Labor Unit Cost" if current_lang == 'en' else "ต้นทุนแรงงานต่อหน่วย"
-                        total_unit_label = "Total Unit Cost" if current_lang == 'en' else "ต้นทุนรวมต่อหน่วย"
-                        total_cost_label = "Total Cost" if current_lang == 'en' else "ต้นทุนรวม"
-                        
-                        new_column_mapping['material_unit_cost'] = st.number_input(
-                            mat_unit_label, min_value=1, max_value=100,
-                            value=current_mapping.get('material_unit_cost', 6),
-                            key=f"{processor_type}_mat_unit_col"
-                        )
-                        new_column_mapping['labor_unit_cost'] = st.number_input(
-                            lab_unit_label, min_value=1, max_value=100,
-                            value=current_mapping.get('labor_unit_cost', 7),
-                            key=f"{processor_type}_lab_unit_col"
-                        )
-                        new_column_mapping['total_unit_cost'] = st.number_input(
-                            total_unit_label, min_value=1, max_value=100,
-                            value=current_mapping.get('total_unit_cost', 8),
-                            key=f"{processor_type}_total_unit_col"
-                        )
-                        new_column_mapping['total_cost'] = st.number_input(
-                            total_cost_label, min_value=1, max_value=100,
-                            value=current_mapping.get('total_cost', 9),
-                            key=f"{processor_type}_total_col"
-                        )
-                    else:
-                        # System processors (AC, EE, FP)
-                        total_row_label = "Total Row Marker Column" if current_lang == 'en' else "คอลัมน์แถวรวม"
-                        mat_unit_label = "Material Unit Cost" if current_lang == 'en' else "ต้นทุนวัสดุต่อหน่วย"
-                        mat_cost_label = "Material Cost" if current_lang == 'en' else "ต้นทุนวัสดุ"
-                        lab_unit_label = "Labor Unit Cost" if current_lang == 'en' else "ต้นทุนแรงงานต่อหน่วย"
-                        lab_cost_label = "Labor Cost" if current_lang == 'en' else "ต้นทุนแรงงาน"
-                        total_cost_label = "Total Cost" if current_lang == 'en' else "ต้นทุนรวม"
-                        
-                        new_column_mapping['total_row_col'] = st.number_input(
-                            total_row_label, min_value=1, max_value=100,
-                            value=current_mapping.get('total_row_col', 3),
-                            key=f"{processor_type}_total_row_col"
-                        )
-                        new_column_mapping['material_unit_cost'] = st.number_input(
-                            mat_unit_label, min_value=1, max_value=100,
-                            value=current_mapping.get('material_unit_cost', 8),
-                            key=f"{processor_type}_mat_unit_col"
-                        )
-                        new_column_mapping['material_cost'] = st.number_input(
-                            mat_cost_label, min_value=1, max_value=100,
-                            value=current_mapping.get('material_cost', 9),
-                            key=f"{processor_type}_mat_col"
-                        )
-                        new_column_mapping['labor_unit_cost'] = st.number_input(
-                            lab_unit_label, min_value=1, max_value=100,
-                            value=current_mapping.get('labor_unit_cost', 10),
-                            key=f"{processor_type}_lab_unit_col"
-                        )
-                        new_column_mapping['labor_cost'] = st.number_input(
-                            lab_cost_label, min_value=1, max_value=100,
-                            value=current_mapping.get('labor_cost', 11),
-                            key=f"{processor_type}_lab_col"
-                        )
-                        new_column_mapping['total_cost'] = st.number_input(
-                            total_cost_label, min_value=1, max_value=100,
-                            value=current_mapping.get('total_cost', 12),
-                            key=f"{processor_type}_total_col"
-                        )
-                
-                # Submit button
-                update_btn_text = f"Update {processor_type.upper()} Configuration" if current_lang == 'en' else f"อัปเดตการตั้งค่า {processor_type.upper()}"
-                if st.form_submit_button(update_btn_text):
-                    with st.spinner("Updating configuration..." if current_lang == 'en' else "กำลังอัปเดตการตั้งค่า..."):
-                        update_response = api.update_config(
-                            processor_name=processor_type,
-                            header_row=new_header_row,
-                            column_mapping=new_column_mapping
-                        )
-                    
-                    if update_response.get('success', False):
-                        success_msg = f"✅ {processor_type.upper()} configuration updated successfully!" if current_lang == 'en' else f"✅ อัปเดตการตั้งค่า {processor_type.upper()} สำเร็จ!"
-                        st.success(success_msg)
-                        st.rerun()  # Refresh the page to show updated values
-                    else:
-                        error_msg = f"❌ Failed to update configuration: {update_response.get('error', 'Unknown error')}" if current_lang == 'en' else f"❌ อัปเดตการตั้งค่าล้มเหลว: {update_response.get('error', 'ข้อผิดพลาดที่ไม่ทราบสาเหตุ')}"
-                        st.error(error_msg, f"- Table Name: `{processor_config.get('table_name', 'N/A')}`")
-            
-            with col2:
-                st.write("**Column Mapping:**")
-                column_mapping = processor_config.get('column_mapping', {})
-                for key, value in column_mapping.items():
-                    st.write(f"- {key}: Column {value}")
-            
-            # Update form
-            with st.form(f"update_{processor_type}_config"):
-                st.write("**Update Configuration:**")
-                
-                # Header row input
-                new_header_row = st.number_input(
-                    "Header Row (0-based)",
-                    min_value=0,
-                    max_value=100,
-                    value=processor_config.get('header_row', 0),
-                    key=f"{processor_type}_header_row"
-                )
-                
-                # Column mapping inputs
-                st.write("**Column Mapping:**")
-                col_map_cols = st.columns(2)
-                
-                new_column_mapping = {}
-                
-                # Get current column mapping for default values
-                current_mapping = processor_config.get('column_mapping', {})
-                
-                # Common columns for all processors
-                with col_map_cols[0]:
-                    new_column_mapping['code'] = st.number_input(
-                        "Code Column", min_value=1, max_value=100,
-                        value=current_mapping.get('code', 2),
-                        key=f"{processor_type}_code_col"
-                    )
-                    new_column_mapping['name'] = st.number_input(
-                        "Name Column", min_value=1, max_value=100,
-                        value=current_mapping.get('name', 3),
-                        key=f"{processor_type}_name_col"
-                    )
-                    new_column_mapping['unit'] = st.number_input(
-                        "Unit Column", min_value=1, max_value=100,
-                        value=current_mapping.get('unit', 5),
-                        key=f"{processor_type}_unit_col"
-                    )
-                    new_column_mapping['quantity'] = st.number_input(
-                        "Quantity Column", min_value=1, max_value=100,
-                        value=current_mapping.get('quantity', 4),
-                        key=f"{processor_type}_quantity_col"
-                    )
-                
-                with col_map_cols[1]:
-                    # Processor-specific columns
-                    if processor_type == 'interior':
-                        new_column_mapping['material_unit_cost'] = st.number_input(
-                            "Material Unit Cost", min_value=1, max_value=100,
-                            value=current_mapping.get('material_unit_cost', 6),
-                            key=f"{processor_type}_mat_unit_col"
-                        )
-                        new_column_mapping['labor_unit_cost'] = st.number_input(
-                            "Labor Unit Cost", min_value=1, max_value=100,
-                            value=current_mapping.get('labor_unit_cost', 7),
-                            key=f"{processor_type}_lab_unit_col"
-                        )
-                        new_column_mapping['total_unit_cost'] = st.number_input(
-                            "Total Unit Cost", min_value=1, max_value=100,
-                            value=current_mapping.get('total_unit_cost', 8),
-                            key=f"{processor_type}_total_unit_col"
-                        )
-                        new_column_mapping['total_cost'] = st.number_input(
-                            "Total Cost", min_value=1, max_value=100,
-                            value=current_mapping.get('total_cost', 9),
-                            key=f"{processor_type}_total_col"
-                        )
-                    else:
-                        # System processors (AC, EE, FP)
-                        new_column_mapping['total_row_col'] = st.number_input(
-                            "Total Row Marker Column", min_value=1, max_value=100,
-                            value=current_mapping.get('total_row_col', 3),
-                            key=f"{processor_type}_total_row_col"
-                        )
-                        new_column_mapping['material_unit_cost'] = st.number_input(
-                            "Material Unit Cost", min_value=1, max_value=100,
-                            value=current_mapping.get('material_unit_cost', 8),
-                            key=f"{processor_type}_mat_unit_col"
-                        )
-                        new_column_mapping['material_cost'] = st.number_input(
-                            "Material Cost", min_value=1, max_value=100,
-                            value=current_mapping.get('material_cost', 9),
-                            key=f"{processor_type}_mat_col"
-                        )
-                        new_column_mapping['labor_unit_cost'] = st.number_input(
-                            "Labor Unit Cost", min_value=1, max_value=100,
-                            value=current_mapping.get('labor_unit_cost', 10),
-                            key=f"{processor_type}_lab_unit_col"
-                        )
-                        new_column_mapping['labor_cost'] = st.number_input(
-                            "Labor Cost", min_value=1, max_value=100,
-                            value=current_mapping.get('labor_cost', 11),
-                            key=f"{processor_type}_lab_col"
-                        )
-                        new_column_mapping['total_cost'] = st.number_input(
-                            "Total Cost", min_value=1, max_value=100,
-                            value=current_mapping.get('total_cost', 12),
-                            key=f"{processor_type}_total_col"
-                        )
-                
-                # Submit button
-                if st.form_submit_button(f"Update {processor_type.upper()} Configuration"):
-                    with st.spinner("Updating configuration..."):
-                        update_response = api.update_config(
-                            processor_name=processor_type,
-                            header_row=new_header_row,
-                            column_mapping=new_column_mapping
-                        )
-                    
-                    if update_response.get('success', False):
-                        st.success(f"✅ {processor_type.upper()} configuration updated successfully!")
-                        st.rerun()  # Refresh the page to show updated values
-                    else:
-                        st.error(f"❌ Failed to update configuration: {update_response.get('error', 'Unknown error')}")
-
+        
 
 def show_cleanup_confirmation(session_id: str):
     """Show cleanup confirmation dialog"""
@@ -660,7 +381,6 @@ def show_cleanup_confirmation(session_id: str):
             if st.button(get_text('no_cancel')):
                 st.session_state.show_cleanup_confirm = False
                 st.rerun()
-
 
 def main():
     """Main Streamlit application"""
@@ -736,15 +456,6 @@ def main():
         if st.button(get_text('settings'), help=get_text('settings_tooltip')):
             st.session_state.show_settings = not st.session_state.get('show_settings', False)
     
-    # Show settings page if requested
-    if st.session_state.get('show_settings', False):
-        show_settings_page()
-        
-        if st.button(get_text('back_main')):
-            st.session_state.show_settings = False
-            st.rerun()
-        return
-    
     # Initialize API client
     api = BOQProcessorAPI()
     
@@ -796,7 +507,7 @@ def main():
         st.markdown("---")
         st.header(get_text('step2_title'))
         
-        col1, col2, col3 = st.columns([2, 1, 1])
+        col1, col2 = st.columns([3, 1])
         
         with col1:
             st.write(get_text('step2_desc'))
@@ -809,23 +520,19 @@ def main():
                 if response.get('success', False):
                     st.success(get_text('generate_success').format(response['filename']))
                     
-                    # Auto-open output folder
-                    open_folder(OUTPUT_FOLDER)
+                    # Show download links instead of opening folder
+                    show_download_links(OUTPUT_FOLDER, response['filename'])
                     
                     # Show generation summary
                     st.info(get_text('items_processed').format(response['items_processed'], response['items_failed']))
                 else:
                     st.error(get_text('generate_failed').format(response.get('error', 'Unknown error')))
         
-        with col3:
-            if st.button(get_text('open_folder')):
-                open_folder(OUTPUT_FOLDER)
-        
         # Step 3: Apply Markup
         st.markdown("---")
         st.header(get_text('step3_title'))
         
-        col1, col2, col3 = st.columns([2, 1, 1])
+        col1, col2 = st.columns([3, 1])
         
         with col1:
             markup_percent = st.slider(
@@ -846,17 +553,13 @@ def main():
                 if response.get('success', False):
                     st.success(get_text('markup_success').format(markup_percent, response['filename']))
                     
-                    # Auto-open output folder
-                    open_folder(OUTPUT_FOLDER)
+                    # Show download links for markup file
+                    show_download_links(OUTPUT_FOLDER, response['filename'])
                     
                     # Show application summary
                     st.info(get_text('markup_applied').format(response['items_processed'], response['items_failed']))
                 else:
                     st.error(get_text('markup_failed').format(response.get('error', 'Unknown error')))
-        
-        with col3:
-            if st.button(get_text('open_folder') + " ", key="markup_open"):
-                open_folder(OUTPUT_FOLDER)
         
         # Cleanup section
         st.markdown("---")

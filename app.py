@@ -29,7 +29,7 @@ from models.config_models import (
 
 logging.basicConfig(level=logging.DEBUG)
 
-class BOQProcessor:
+class App:
     """Main BOQ processor that orchestrates all sheet-specific processors"""
     
     def __init__(self):
@@ -539,5 +539,5 @@ class BOQProcessor:
         self.app.run(host=host, port=port, debug=debug)
 
 if __name__ == '__main__':
-    processor = BOQProcessor()
+    processor = App()
     processor.run()

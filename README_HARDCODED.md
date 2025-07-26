@@ -48,7 +48,7 @@ python main.py --help
 ```
 your_project_folder/
 ├── main.py                          # Main application runner
-├── refactored_boq_processor.py      # Main orchestrator
+├── app.py      # Main orchestrator
 ├── base_sheet_processor.py          # Base class for all processors
 ├── interior_sheet_processor.py      # Interior (INT) sheet processor
 ├── electrical_sheet_processor.py    # Electrical (EE) sheet processor
@@ -59,7 +59,7 @@ your_project_folder/
 │   └── master.xlsx                  # Master data file
 ├── uploads/                         # Temporary upload folder
 ├── output/                          # Generated BOQ files
-└── boq_processor.log               # Application log file
+└── app.log               # Application log file
 ```
 
 ## 🔧 API Usage
@@ -186,7 +186,7 @@ This refactored version follows a **step-by-step improvement approach**:
 # Check database contents
 python -c "
 import sqlite3
-conn = sqlite3.connect('~/AppData/Roaming/BOQProcessor/master_data.db')
+conn = sqlite3.connect('~/AppData/Roaming/App/master_data.db')
 cursor = conn.cursor()
 cursor.execute('SELECT name FROM sqlite_master WHERE type=\"table\"')
 print('Tables:', [row[0] for row in cursor.fetchall()])
@@ -214,7 +214,7 @@ processor = InteriorSheetProcessor(db_path, markup_rates)
    ```bash
    python -c "
    import sqlite3
-   conn = sqlite3.connect('~/AppData/Roaming/BOQProcessor/master_data.db')
+   conn = sqlite3.connect('~/AppData/Roaming/App/master_data.db')
    cursor = conn.cursor()
    cursor.execute('SELECT COUNT(*) FROM interior_items WHERE material_cost > 0')
    print('Items with costs:', cursor.fetchone()[0])
@@ -240,30 +240,30 @@ You should see:
 - `ac_sheet_processor.py`
 - `fp_sheet_processor.py`
 - `summary_sheet_processor.py`
-- `refactored_boq_processor.py`
+- `app.py`
 
 ### Issue: Processing errors
 
-1. **Check log file**: `boq_processor.log`
+1. **Check log file**: `app.log`
 2. **Run with debug flag**: `python main.py --debug`
 3. **Validate master data**: Ensure `master_data/master.xlsx` exists
 
 ## 🔧 Configuration
 
 ### Markup Rates
-Default markup rates can be modified in `refactored_boq_processor.py`:
+Default markup rates can be modified in `app.py`:
 ```python
 self.markup_rates = {100: 1.00, 130: 1.30, 150: 1.50, 50: 0.50, 30: 0.30}
 ```
 
 ### Database Location
-Default database location: `~/AppData/Roaming/BOQProcessor/master_data.db`
+Default database location: `~/AppData/Roaming/App/master_data.db`
 
 ### File Paths
 - **Master data**: `master_data/master.xlsx`
 - **Uploads**: `uploads/` (temporary)
 - **Output**: `output/` (generated files)
-- **Logs**: `boq_processor.log`
+- **Logs**: `app.log`
 
 ## 📝 Next Steps
 
