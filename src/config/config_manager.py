@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Configuration Manager for BOQ Processor using Pydantic models.
@@ -9,6 +10,9 @@ import os
 from typing import Optional
 from pathlib import Path
 import logging
+import sys
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
 from models.config_models import (
     ProcessorConfigs,
     ProcessorType,
@@ -26,8 +30,8 @@ class ConfigManager:
         
         # Default config file location - repo root instead of AppData
         if config_file_path is None:
-            self.app_root = Path(__file__).parent.absolute()
-            self.config_dir = self.app_root / 'config'
+            self.app_root = Path(__file__).parent.parent.parent.absolute()  # Go to project root
+            self.config_dir = self.app_root / 'data' / 'config'
             os.makedirs(self.config_dir, exist_ok=True)
             self.config_file = self.config_dir / 'processor_config.json'
         else:

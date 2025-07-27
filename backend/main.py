@@ -26,7 +26,7 @@ def reset_database_if_requested(args):
     if not args.reset_db:
         return
     
-    app_root = Path(__file__).parent.absolute()
+    app_root = Path(__file__).parent.parent.absolute()  # Go up to project root
     # Database in repo root data folder
     data_dir = app_root / 'data'
     os.makedirs(data_dir, exist_ok=True)
@@ -92,7 +92,9 @@ def main():
         print("   GET  /api/download/<filename>")
         print("=" * 60)
         
-        processor.run(host=args.host, port=args.port, debug=args.debug)
+        # Use 0.0.0.0 for Docker compatibility, localhost for local dev
+        host = "0.0.0.0" if os.getenv('FLASK_ENV') == 'production' else args.host
+        processor.run(host=host, port=args.port, debug=args.debug)
         
     except ImportError as e:
         print(f"❌ Import error: {e}")

@@ -23,7 +23,11 @@ def get_backend_url():
         return "http://localhost:5000"   # Local development
 
 BACKEND_URL = get_backend_url()
-OUTPUT_FOLDER = Path("output")
+# Use new storage structure
+if os.getenv('STREAMLIT_SERVER_HEADLESS') == 'true':
+    OUTPUT_FOLDER = Path("/app/storage/output")  # Docker path
+else:
+    OUTPUT_FOLDER = Path("../storage/output")    # Local development path
 
 # Language Configuration (keeping your existing languages dict)
 LANGUAGES = {
@@ -455,6 +459,256 @@ def main():
     with col3:
         if st.button(get_text('settings'), help=get_text('settings_tooltip')):
             st.session_state.show_settings = not st.session_state.get('show_settings', False)
+            st.rerun()
+    
+    # Show settings panel if toggled
+    if st.session_state.get('show_settings', False):
+        st.markdown("---")
+        st.header("⚙️ " + get_text('settings'))
+        
+        with st.expander("🔧 Processor Configuration", expanded=True):
+            try:
+                response = requests.get(f"{BACKEND_URL}/api/config/inquiry")
+                if response.status_code == 200:
+                    config_data = response.json()
+                    
+                    if config_data.get('success'):
+                        configs = config_data.get('configs', {})
+                        if configs:
+                            processor_names = ['interior', 'ac', 'electrical', 'fp']
+                            available_processors = [name for name in processor_names if name in configs]
+                            
+                            # Show editable processor configurations
+                            for proc_name in available_processors:
+                                proc_config = configs[proc_name]
+                                column_mapping = proc_config.get('column_mapping', {})
+                                
+                                with st.expander(f"🔧 {proc_name.title()} Processor", expanded=False):
+                                    # Create form for this processor
+                                    with st.form(f"config_form_{proc_name}"):
+                                        # Basic settings
+                                        st.write("**Basic Settings**")
+                                        col1, col2 = st.columns(2)
+                                        
+                                        with col1:
+                                            new_header_row = st.number_input(
+                                                "Header Row:",
+                                                min_value=0,
+                                                max_value=100,
+                                                value=proc_config.get('header_row', 0),
+                                                key=f"header_{proc_name}"
+                                            )
+                                        
+                                        with col2:
+                                            new_sheet_pattern = st.text_input(
+                                                "Sheet Pattern:",
+                                                value=proc_config.get('sheet_pattern', ''),
+                                                key=f"pattern_{proc_name}",
+                                                help="Pattern to match sheet names"
+                                            )
+                                        
+                                        # Column mapping settings
+                                        st.write("**Column Mapping** (Column numbers, 1-based)")
+                                        
+                                        # Common columns for all processors
+                                        col1, col2, col3, col4 = st.columns(4)
+                                        with col1:
+                                            new_code_col = st.number_input(
+                                                "Code Column:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('code', 2),
+                                                key=f"code_{proc_name}"
+                                            )
+                                        with col2:
+                                            new_name_col = st.number_input(
+                                                "Name Column:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('name', 3),
+                                                key=f"name_{proc_name}"
+                                            )
+                                        with col3:
+                                            new_unit_col = st.number_input(
+                                                "Unit Column:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('unit', 5),
+                                                key=f"unit_{proc_name}"
+                                            )
+                                        with col4:
+                                            new_quantity_col = st.number_input(
+                                                "Quantity Column:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('quantity', 4),
+                                                key=f"quantity_{proc_name}"
+                                            )
+                                        
+                                        # Processor-specific columns
+                                        if proc_name == 'interior':
+                                            st.write("**Interior-Specific Columns**")
+                                            col1, col2, col3, col4 = st.columns(4)
+                                            with col1:
+                                                new_mat_unit_cost = st.number_input(
+                                                    "Material Unit Cost:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('material_unit_cost', 6),
+                                                    key=f"mat_unit_{proc_name}"
+                                                )
+                                            with col2:
+                                                new_labor_unit_cost = st.number_input(
+                                                    "Labor Unit Cost:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('labor_unit_cost', 7),
+                                                    key=f"labor_unit_{proc_name}"
+                                                )
+                                            with col3:
+                                                new_total_unit_cost = st.number_input(
+                                                    "Total Unit Cost:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('total_unit_cost', 8),
+                                                    key=f"total_unit_{proc_name}"
+                                                )
+                                            with col4:
+                                                new_total_cost = st.number_input(
+                                                    "Total Cost:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('total_cost', 9),
+                                                    key=f"total_{proc_name}"
+                                                )
+                                        else:
+                                            # System processors (AC, EE, FP)
+                                            st.write("**System-Specific Columns**")
+                                            col1, col2, col3 = st.columns(3)
+                                            with col1:
+                                                new_total_row_col = st.number_input(
+                                                    "Total Row Marker:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('total_row_col', 3),
+                                                    key=f"total_row_{proc_name}"
+                                                )
+                                            with col2:
+                                                new_mat_unit_cost = st.number_input(
+                                                    "Material Unit Cost:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('material_unit_cost', 8),
+                                                    key=f"mat_unit_{proc_name}"
+                                                )
+                                            with col3:
+                                                new_mat_cost = st.number_input(
+                                                    "Material Cost:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('material_cost', 9),
+                                                    key=f"mat_cost_{proc_name}"
+                                                )
+                                            
+                                            col1, col2, col3 = st.columns(3)
+                                            with col1:
+                                                new_labor_unit_cost = st.number_input(
+                                                    "Labor Unit Cost:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('labor_unit_cost', 10),
+                                                    key=f"labor_unit_{proc_name}"
+                                                )
+                                            with col2:
+                                                new_labor_cost = st.number_input(
+                                                    "Labor Cost:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('labor_cost', 11),
+                                                    key=f"labor_cost_{proc_name}"
+                                                )
+                                            with col3:
+                                                new_total_cost = st.number_input(
+                                                    "Total Cost:",
+                                                    min_value=1,
+                                                    max_value=50,
+                                                    value=column_mapping.get('total_cost', 12),
+                                                    key=f"total_{proc_name}"
+                                                )
+                                        
+                                        # Submit button
+                                        submitted = st.form_submit_button(f"💾 Update {proc_name.title()} Configuration", type="primary")
+                                        
+                                        if submitted:
+                                            # Build column mapping based on processor type
+                                            if proc_name == 'interior':
+                                                new_column_mapping = {
+                                                    'code': new_code_col,
+                                                    'name': new_name_col,
+                                                    'unit': new_unit_col,
+                                                    'quantity': new_quantity_col,
+                                                    'material_unit_cost': new_mat_unit_cost,
+                                                    'labor_unit_cost': new_labor_unit_cost,
+                                                    'total_unit_cost': new_total_unit_cost,
+                                                    'total_cost': new_total_cost
+                                                }
+                                            else:
+                                                new_column_mapping = {
+                                                    'code': new_code_col,
+                                                    'name': new_name_col,
+                                                    'unit': new_unit_col,
+                                                    'quantity': new_quantity_col,
+                                                    'total_row_col': new_total_row_col,
+                                                    'material_unit_cost': new_mat_unit_cost,
+                                                    'material_cost': new_mat_cost,
+                                                    'labor_unit_cost': new_labor_unit_cost,
+                                                    'labor_cost': new_labor_cost,
+                                                    'total_cost': new_total_cost
+                                                }
+                                            
+                                            # Update configuration via API
+                                            update_data = {
+                                                'processor_name': proc_name,
+                                                'header_row': new_header_row,
+                                                'column_mapping': new_column_mapping
+                                            }
+                                            
+                                            try:
+                                                update_response = requests.post(
+                                                    f"{BACKEND_URL}/api/config/update",
+                                                    json=update_data
+                                                )
+                                                
+                                                if update_response.status_code == 200:
+                                                    result = update_response.json()
+                                                    if result.get('success'):
+                                                        st.success(f"✅ {proc_name.title()} processor configuration updated successfully!")
+                                                        st.rerun()
+                                                    else:
+                                                        st.error(f"❌ Update failed: {result.get('error', 'Unknown error')}")
+                                                else:
+                                                    st.error(f"❌ HTTP error: {update_response.status_code}")
+                                            
+                                            except Exception as e:
+                                                st.error(f"❌ Update error: {str(e)}")
+                                
+                                st.markdown("---")
+                        else:
+                            st.warning("No processor configurations found")
+                    else:
+                        st.error("Failed to load configuration data")
+                else:
+                    st.error(f"Backend connection failed (HTTP {response.status_code})")
+                    
+            except Exception as e:
+                st.error(f"Cannot connect to backend: {str(e)}")
+            
+            # Close settings button
+            if st.button("✖️ Close Settings"):
+                st.session_state.show_settings = False
+                st.rerun()
+        
+        st.markdown("---")
     
     # Initialize API client
     api = BOQProcessorAPI()

@@ -10,8 +10,9 @@ services:
       - "5000:5000"
     volumes:
       - ./master_data:/app/master_data
-      - ./output:/app/output
-      - ./config:/app/config
+      - ./storage/uploads:/app/storage/uploads
+      - ./storage/output:/app/storage/output
+      - ./storage/temp:/app/storage/temp
       - ./data:/app/data
     environment:
       - FLASK_ENV=production
@@ -28,7 +29,7 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./output:/app/output  # Share output folder
+      - ./storage/output:/app/storage/output  # Share output folder with new structure
     environment:
       - STREAMLIT_SERVER_HEADLESS=true
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0

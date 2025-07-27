@@ -14,12 +14,16 @@ import shutil
 import openpyxl
 from typing import Dict, List, Any, Optional
 
+# Add parent directory to path for imports
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+
 # Import the specialized processors
-from interior_sheet_processor import InteriorSheetProcessor
-from electrical_sheet_processor import ElectricalSheetProcessor
-from ac_sheet_processor import ACSheetProcessor
-from fp_sheet_processor import FPSheetProcessor
-from config_manager import ConfigManager
+from src.processors.interior_sheet_processor import InteriorSheetProcessor
+from src.processors.electrical_sheet_processor import ElectricalSheetProcessor
+from src.processors.ac_sheet_processor import ACSheetProcessor
+from src.processors.fp_sheet_processor import FPSheetProcessor
+from src.config.config_manager import ConfigManager
 from models.config_models import (
     ProcessorType,
     ConfigUpdateRequest,
@@ -37,7 +41,7 @@ class App:
         CORS(self.app)
         
         # Setup directories - repo root only
-        self.app_root = Path(__file__).parent.absolute()
+        self.app_root = Path(__file__).parent.parent.absolute()  # Go up to project root
         
         # Database in repo root data folder
         self.data_dir = self.app_root / 'data'
@@ -49,8 +53,8 @@ class App:
         
         # Folder setup - all in repo root
         self.master_data_folder = str(self.app_root / 'master_data')
-        self.upload_folder = str(self.app_root / 'uploads')
-        self.output_folder = str(self.app_root / 'output')
+        self.upload_folder = str(self.app_root / 'storage' / 'uploads')
+        self.output_folder = str(self.app_root / 'storage' / 'output')
         
         # Create all necessary directories
         folders = [

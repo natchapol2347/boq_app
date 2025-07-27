@@ -12,18 +12,18 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy frontend code
-COPY streamlit_frontend.py .
+# Copy frontend code with new structure
+COPY frontend/ ./frontend/
 COPY models/ ./models/
 
 # Create output directory (shared with backend)
-RUN mkdir -p /app/output
+RUN mkdir -p /app/storage/output
 
 # Expose Streamlit port
 EXPOSE 8501
 
-# Run Streamlit
-CMD ["streamlit", "run", "streamlit_frontend.py", \
+# Run Streamlit from new location
+CMD ["streamlit", "run", "frontend/frontend.py", \
      "--server.address", "0.0.0.0", \
      "--server.port", "8501", \
      "--server.headless", "true", \

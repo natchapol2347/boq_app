@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Electrical sheet processor - handles electrical work sheets.
+Air Conditioning sheet processor - handles AC system sheets.
 Updated to match new abstract methods and range-based approach.
 """
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from typing import Dict, Any, List, Tuple, Optional
 import pandas as pd
 import uuid
-from base_sheet_processor import BaseSheetProcessor
+from .base_sheet_processor import BaseSheetProcessor
 import sqlite3
 from models.config_models import SystemProcessorConfig
 
-
-class ElectricalSheetProcessor(BaseSheetProcessor):
-    """Processor for Electrical (EE) sheets"""
+class ACSheetProcessor(BaseSheetProcessor):
+    """Processor for Air Conditioning (AC) sheets"""
     
     def __init__(self, db_path: str, markup_rates: Dict[int, float], config: Optional[SystemProcessorConfig] = None):
         super().__init__(db_path, markup_rates, config)
@@ -21,7 +23,7 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
         if config is None:
             from models.config_models import ProcessorConfigs
             default_configs = ProcessorConfigs.get_default_config()
-            self.config = default_configs.electrical
+            self.config = default_configs.ac
     
     @property
     def sheet_pattern(self) -> str:
@@ -372,6 +374,7 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
                            markup_options: List[int], start_markup_col: int) -> None:
         """
         Write pre-calculated section totals to worksheet.
+        Totals are already calculated in find_section_boundaries using range-based approach.
         """
         self.logger.debug(f"write_section_totals called with {len(sections)} sections: {list(sections.keys())}")
         
@@ -381,6 +384,7 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
                 continue
             
             self.logger.debug(f"Writing pre-calculated totals for '{section_id}' at row {total_row}")
+            self.logger.debug(f"Section data keys: {list(section_data.keys())}")
             
             # Get pre-calculated sums
             material_unit_sum = section_data.get('material_unit_sum', 0)
@@ -388,6 +392,11 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
             labor_unit_sum = section_data.get('labor_unit_sum', 0)
             labor_sum = section_data.get('labor_sum', 0)
             total_sum = section_data.get('total_sum', 0)
+            item_count = section_data.get('item_count', 0)
+
+             
+            self.logger.debug(f"Section '{section_id}': {item_count} items, "
+                           f"Material unit={material_unit_sum}, Labor unit={labor_unit_sum}, Material={material_sum}, Labor={labor_sum}, Total sum={total_sum}")
             
             # Write basic totals
             mat_unit_col = self.column_mapping['material_unit_cost']
@@ -397,11 +406,15 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
             total_col = self.column_mapping['total_cost']
             
             try:
+                self.logger.debug(f"Writing to cells: mat_unit=({total_row},{mat_unit_col}), mat=({total_row},{mat_col}), lab_unit=({total_row},{lab_unit_col}), lab=({total_row},{lab_col}), total=({total_row},{total_col})")
+                
                 worksheet.cell(row=total_row, column=mat_unit_col).value = material_unit_sum
                 worksheet.cell(row=total_row, column=mat_col).value = material_sum
                 worksheet.cell(row=total_row, column=lab_unit_col).value = labor_unit_sum
                 worksheet.cell(row=total_row, column=lab_col).value = labor_sum
                 worksheet.cell(row=total_row, column=total_col).value = total_sum
+                
+                self.logger.debug(f"Cell values written: mat_unit={material_unit_sum}, mat={material_sum}, lab_unit={labor_unit_sum}, lab={labor_sum}, total={total_sum}")
                 
                 # Write markup totals
                 self.write_markup_costs(worksheet, total_row, total_sum, 
@@ -411,52 +424,8 @@ class ElectricalSheetProcessor(BaseSheetProcessor):
                 
             except Exception as e:
                 self.logger.error(f"Error writing section totals for '{section_id}': {e}")
-        
-        # After all section totals are written, calculate and write grand total
-        self.write_grand_total_from_sections(worksheet, sections, markup_options, start_markup_col)
-    
-    def write_grand_total_from_sections(self, worksheet, sections: Dict[str, Dict[str, Any]], 
-                                      markup_options: List[int], start_markup_col: int) -> None:
-        """
-        Calculate grand total by reading total_cost values from section rows and write to รวมราคา row.
-        """
-        try:
-            # Sum up total_cost from all section rows
-            grand_total_cost = 0
-            total_col = self.column_mapping['total_cost']  # Column L
-            
-            for section_id, section_data in sections.items():
-                total_row = section_data.get('total_row')
-                if total_row:
-                    # Read the total_cost value that we just wrote
-                    section_total = worksheet.cell(row=total_row, column=total_col).value or 0
-                    grand_total_cost += float(section_total)
-                    self.logger.debug(f"Section '{section_id}' total: {section_total}, Grand total so far: {grand_total_cost}")
-            
-            # Find รวมราคา row in column H (11)
-            search_col = 11  # Column H
-            max_row = worksheet.max_row
-            
-            self.logger.debug(f"Searching for รวมราคา in column {search_col} (Column K), grand total to write: {grand_total_cost}")
-            
-            for row_idx in range(1, max_row + 1):
-                cell_value = worksheet.cell(row=row_idx, column=search_col).value
-                if cell_value and 'รวมราคา' in str(cell_value):
-                    self.logger.debug(f"Found grand total row at {row_idx}: '{cell_value}'")
-                    
-                    # Write only the grand total to total_cost column (L)
-                    worksheet.cell(row=row_idx, column=total_col).value = grand_total_cost
-                    
-                    # Write markup costs for grand total
-                    self.write_markup_costs(worksheet, row_idx, grand_total_cost, markup_options, start_markup_col)
-                    
-                    self.logger.debug(f"Grand total written: {grand_total_cost} to row {row_idx}, column {total_col}")
-                    return
-            
-            self.logger.debug("No grand total row found with รวมราคา pattern")
-            
-        except Exception as e:
-            self.logger.error(f"Error writing grand total: {e}")
+                import traceback
+                self.logger.error(traceback.format_exc())
     
     def write_markup_costs(self, worksheet, row: int, base_cost: float, markup_options: List[int], start_col: int) -> None:
         """Write markup costs for interior items"""
