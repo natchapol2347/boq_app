@@ -269,10 +269,6 @@ def show_download_links(folder_path: Path, latest_filename: str = None):
         else:
             st.info("No file to download")
         
-        # Show folder location for reference
-        st.write("")
-        st.info(get_text('files_saved_to').format(folder_path))
-        
     except Exception as e:
         st.error(f"Error accessing files: {e}")
         # Fallback: show at least the latest file if we have it

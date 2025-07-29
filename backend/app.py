@@ -565,13 +565,11 @@ class App:
                 else:
                     return jsonify({'success': False, 'error': 'Invalid session_id'})
                 
-                # Find and delete related output files (optional - files generated for this session)
-                # We'll look for files that might be related to this session's original filename
-                if original_filepath:
-                    original_basename = os.path.splitext(os.path.basename(original_filepath))[0]
+                # Delete ALL files in the output folder (complete cleanup)
+                if os.path.exists(self.output_folder):
                     for output_file in os.listdir(self.output_folder):
-                        if original_basename in output_file:
-                            output_path = os.path.join(self.output_folder, output_file)
+                        output_path = os.path.join(self.output_folder, output_file)
+                        if os.path.isfile(output_path):  # Only delete files, not subdirectories
                             try:
                                 os.remove(output_path)
                                 files_deleted.append(output_path)
