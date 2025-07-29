@@ -1,4 +1,3 @@
-# Dockerfile.frontend  
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -12,17 +11,13 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy frontend code with new structure
-COPY frontend/ ./frontend/
-COPY models/ ./models/
-
 # Create output directory (shared with backend)
 RUN mkdir -p /app/storage/output
 
 # Expose Streamlit port
 EXPOSE 8501
 
-# Run Streamlit from new location
+# Run Streamlit
 CMD ["streamlit", "run", "frontend/frontend.py", \
      "--server.address", "0.0.0.0", \
      "--server.port", "8501", \

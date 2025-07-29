@@ -11,14 +11,7 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code with new structure
-COPY backend/ ./backend/
-COPY src/ ./src/
-COPY models/ ./models/
-COPY master_data/ ./master_data/
-COPY samples/ ./samples/
-
-# Create necessary directories for new structure
+# Create necessary directories
 RUN mkdir -p /app/data/config /app/storage/uploads /app/storage/output /app/storage/temp /app/logs
 
 # Set Python path for proper imports
@@ -27,5 +20,5 @@ ENV PYTHONPATH=/app
 # Expose backend port
 EXPOSE 5000
 
-# Run backend server from new location
+# Run backend server
 CMD ["python", "backend/main.py"]

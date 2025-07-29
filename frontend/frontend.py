@@ -74,6 +74,13 @@ LANGUAGES = {
         - ล้างข้อมูลการประมวลผลทั้งหมดจากหน่วยความจำ''',
         'yes_clear': '✅ ใช่, ล้าง',
         'no_cancel': '❌ ไม่, ยกเลิก',
+        'pure_markup_title': '💵 มาร์คอัป: ใส่มาร์คอัปในไฟล์ BOQ โดยตรง ',
+        'pure_markup_desc': 'อัปโหลดไฟล์ BOQ ใดๆ (รวมถึงไฟล์ที่แก้ไขแล้ว) และใส่มาร์คอัปโดยตรง',
+        'pure_markup_help': 'มาร์คอัปในไฟล์ที่มีข้อมูลต้นทุนอยู่แล้วได้เลย',
+        'pure_markup_upload': 'อัปโหลดไฟล์ BOQ สำหรับใส่มาร์คอัป',
+        'apply_pure_markup': '💵 ใส่มาร์คอัป {}%',
+        'pure_markup_success': '✅ ใส่มาร์คอัป {}% แล้ว: **{}**',
+        'pure_markup_failed': '❌ การใส่มาร์คอัปล้มเหลว: {}',
         'memory_cleared': '🧹 ล้างหน่วยความจำสำเร็จ!',
         'clear_failed': 'ล้างหน่วยความจำล้มเหลว: {}',
         'footer': 'ระบบประมาณราคา BOQ v2.0 | Streamlit Frontend',
@@ -130,6 +137,13 @@ LANGUAGES = {
         - Clear all processing data from memory''',
         'yes_clear': '✅ Yes, Clear',
         'no_cancel': '❌ No, Cancel',
+        'pure_markup_title': '💵 Pure Markup: Apply Markup to Any BOQ File',
+        'pure_markup_desc': 'Upload any BOQ file (including manually edited ones) and apply markup directly',
+        'pure_markup_help': 'This feature requires no session - just markup files that already have cost data',
+        'pure_markup_upload': 'Upload BOQ file for markup application',
+        'apply_pure_markup': '💵 Apply {}% Markup',
+        'pure_markup_success': '✅ {}% markup applied: **{}**',
+        'pure_markup_failed': '❌ Pure markup application failed: {}',
         'memory_cleared': '🧹 Memory cleared successfully!',
         'clear_failed': 'Failed to clear memory: {}',
         'footer': 'BOQ Processor v2.0 | Streamlit Frontend',
@@ -203,6 +217,17 @@ class BOQProcessorAPI:
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
+    def pure_markup(self, file_path: str, markup_percent: float) -> Dict[str, Any]:
+        """Apply markup to any BOQ file without session dependency"""
+        try:
+            with open(file_path, 'rb') as f:
+                files = {'file': f}
+                data = {'markup_percent': str(markup_percent)}
+                response = requests.post(f"{self.base_url}/api/pure-markup", files=files, data=data)
+                return response.json()
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
     def cleanup_session(self, session_id: str) -> Dict[str, Any]:
         """Cleanup session data and files"""
         data = {'session_id': session_id}
@@ -233,37 +258,17 @@ class BOQProcessorAPI:
             return None
 
 def show_download_links(folder_path: Path, latest_filename: str = None):
-    """Show download links for generated files - Save button only"""
+    """Show download link for the latest generated file only"""
     try:
         st.write("---")
         st.subheader(get_text('recent_files'))
         
-        # Try to list files in the output folder
-        files_found = []
-        if folder_path.exists():
-            files_found = list(folder_path.glob("*.xlsx"))
-            # Sort by modification time (newest first) and limit to 3
-            files_found = sorted(files_found, key=lambda x: x.stat().st_mtime, reverse=True)[:3]
-        
-        # If we have a latest filename from the API, prioritize it
+        # Show only the latest file if provided
         if latest_filename:
-            st.write("**🎯 Latest Generated File:**")
             show_single_download_link(latest_filename, folder_path / latest_filename if folder_path.exists() else None, is_latest=True)
-            st.write("")
+        else:
+            st.info("No file to download")
         
-        # Show other recent files (max 3, excluding the latest if already shown)
-        if files_found:
-            st.write("**📋 Recent Files:**")
-            count = 0
-            for file in files_found:
-                # Skip if this is the latest file we already showed
-                if latest_filename and file.name == latest_filename:
-                    continue
-                
-                if count < 3:  # Limit to 3 files
-                    show_single_download_link(file.name, file_path=file)
-                    count += 1
-                    
         # Show folder location for reference
         st.write("")
         st.info(get_text('files_saved_to').format(folder_path))
@@ -825,6 +830,69 @@ def main():
         with col2:
             show_cleanup_confirmation(st.session_state.session_id)
     
+    # Pure Markup Section - Independent of main workflow
+    st.markdown("---")
+    st.header(get_text('pure_markup_title'))
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.write(get_text('pure_markup_desc'))
+        st.info(get_text('pure_markup_help'))
+    
+    with col2:
+        st.write("")  # Spacing
+    
+    # Pure markup file upload
+    pure_markup_file = st.file_uploader(
+        get_text('pure_markup_upload'),
+        type=['xlsx'],
+        key="pure_markup_uploader"
+    )
+    
+    if pure_markup_file is not None:
+        # Save the file temporarily
+        temp_path = Path("temp_uploads")
+        temp_path.mkdir(exist_ok=True)
+        
+        pure_file_path = temp_path / pure_markup_file.name
+        with open(pure_file_path, "wb") as f:
+            f.write(pure_markup_file.getbuffer())
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.success(get_text('file_uploaded').format(pure_markup_file.name))
+            
+            # Markup percentage slider
+            pure_markup_percent = st.slider(
+                get_text('markup_desc'),
+                min_value=0,
+                max_value=200,
+                value=30,
+                step=5,
+                key="pure_markup_slider",
+                help="This will multiply all cost values by (1 + markup%/100)" if st.session_state.language == 'en' else "การดำเนินการนี้จะคูณค่าต้นทุนทั้งหมดด้วย (1 + markup%/100)"
+            )
+            st.write(get_text('markup_multiplier').format(1 + pure_markup_percent/100))
+        
+        with col2:
+            st.write("")  # Spacing
+            if st.button(get_text('apply_pure_markup').format(pure_markup_percent), type="primary", key="pure_markup_apply"):
+                with st.spinner(get_text('applying_markup').format(pure_markup_percent)):
+                    response = api.pure_markup(str(pure_file_path), pure_markup_percent)
+                
+                if response.get('success', False):
+                    st.success(get_text('pure_markup_success').format(pure_markup_percent, response['filename']))
+                    
+                    # Show download links for pure markup file
+                    show_download_links(OUTPUT_FOLDER, response['filename'])
+                    
+                    # Show application summary
+                    st.info(get_text('markup_applied').format(response['items_processed'], response['items_failed']))
+                else:
+                    st.error(get_text('pure_markup_failed').format(response.get('error', 'Unknown error')))
+
     # Footer
     st.markdown("---")
     st.markdown(
