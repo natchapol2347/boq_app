@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Refactored BOQ Processor - Main application class that orchestrates all sheet processors.
-CLEANED VERSION: Removed summary logic, moved total writing to processors.
-"""
 
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -18,12 +14,16 @@ import shutil
 import openpyxl
 from typing import Dict, List, Any, Optional
 
+# Add parent directory to path for imports
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+
 # Import the specialized processors
-from interior_sheet_processor import InteriorSheetProcessor
-from electrical_sheet_processor import ElectricalSheetProcessor
-from ac_sheet_processor import ACSheetProcessor
-from fp_sheet_processor import FPSheetProcessor
-from config_manager import ConfigManager
+from src.processors.interior_sheet_processor import InteriorSheetProcessor
+from src.processors.electrical_sheet_processor import ElectricalSheetProcessor
+from src.processors.ac_sheet_processor import ACSheetProcessor
+from src.processors.fp_sheet_processor import FPSheetProcessor
+from src.config.config_manager import ConfigManager
 from models.config_models import (
     ProcessorType,
     ConfigUpdateRequest,
@@ -33,26 +33,37 @@ from models.config_models import (
 
 logging.basicConfig(level=logging.DEBUG)
 
-class RefactoredBOQProcessor:
+class App:
     """Main BOQ processor that orchestrates all sheet-specific processors"""
     
     def __init__(self):
         self.app = Flask(__name__)
         CORS(self.app)
         
-        # Setup directories
-        self.data_dir = Path.home() / 'AppData' / 'Roaming' / 'BOQProcessor'
+        # Setup directories - repo root only
+        self.app_root = Path(__file__).parent.parent.absolute()  # Go up to project root
+        
+        # Database in repo root data folder
+        self.data_dir = self.app_root / 'data'
         os.makedirs(self.data_dir, exist_ok=True)
         self.db_path = str(self.data_dir / 'master_data.db')
         
         # Session management
         self.processing_sessions = {}
         
-        # Folder setup
-        self.master_data_folder = 'master_data'
-        self.upload_folder = 'uploads'
-        self.output_folder = 'output'
-        for folder in [self.master_data_folder, self.upload_folder, self.output_folder]:
+        # Folder setup - all in repo root
+        self.master_data_folder = str(self.app_root / 'master_data')
+        self.upload_folder = str(self.app_root / 'storage' / 'uploads')
+        self.output_folder = str(self.app_root / 'storage' / 'output')
+        
+        # Create all necessary directories
+        folders = [
+            self.master_data_folder, 
+            self.upload_folder, 
+            self.output_folder,
+            str(self.data_dir)
+        ]
+        for folder in folders:
             os.makedirs(folder, exist_ok=True)
         
         # Markup rates
@@ -135,6 +146,69 @@ class RefactoredBOQProcessor:
             if processor.matches_sheet(sheet_name):
                 return processor
         return None
+    
+    def _apply_pure_markup_to_file(self, filepath: str, markup_percent: float) -> tuple[int, int]:
+        """Apply markup directly to cost columns in Excel file without session data"""
+        items_processed = 0
+        items_failed = 0
+        markup_multiplier = 1 + (markup_percent / 100)
+        
+        try:
+            workbook = openpyxl.load_workbook(filepath)
+            
+            for sheet_name in workbook.sheetnames:
+                # Find processor for this sheet to get column mapping
+                processor = self._find_processor_for_sheet(sheet_name)
+                if not processor:
+                    logging.info(f"No processor found for sheet: {sheet_name} - skipping markup")
+                    continue
+                
+                worksheet = workbook[sheet_name]
+                column_mapping = processor.column_mapping
+                
+                # Cost columns to apply markup to
+                cost_columns = [
+                    'material_unit_cost',
+                    'labor_unit_cost', 
+                    'total_unit_cost',
+                    'total_cost'
+                ]
+                
+                # Apply markup to each cost column
+                for cost_col in cost_columns:
+                    if cost_col not in column_mapping:
+                        continue
+                    
+                    col_num = column_mapping[cost_col]
+                    
+                    # Process all rows in this column (skip header)
+                    for row in range(processor.header_row + 2, worksheet.max_row + 1):  # +2 because header_row is 0-based
+                        try:
+                            cell = worksheet.cell(row=row, column=col_num)
+                            current_value = cell.value
+                            
+                            # Apply markup only to numeric values
+                            if isinstance(current_value, (int, float)) and current_value != 0:
+                                new_value = round(current_value * markup_multiplier, 2)
+                                cell.value = new_value
+                                items_processed += 1
+                                logging.debug(f"Applied {markup_percent}% markup to {sheet_name} row {row}, col {col_num}: {current_value} -> {new_value}")
+                        
+                        except Exception as e:
+                            items_failed += 1
+                            logging.error(f"Error applying markup to {sheet_name} row {row}, col {col_num}: {e}")
+            
+            # Save the modified workbook
+            workbook.save(filepath)
+            workbook.close()
+            
+            logging.info(f"Pure markup applied: {items_processed} items processed, {items_failed} failed")
+            
+        except Exception as e:
+            logging.error(f"Error in _apply_pure_markup_to_file: {e}", exc_info=True)
+            raise
+        
+        return items_processed, items_failed
     
     
     
@@ -404,6 +478,60 @@ class RefactoredBOQProcessor:
                 logging.error(f"Error applying markup: {e}", exc_info=True)
                 return jsonify({'success': False, 'error': str(e)})
         
+        @self.app.route('/api/pure-markup', methods=['POST'])
+        def pure_markup_route():
+            """Apply markup to any BOQ file without session dependency"""
+            if 'file' not in request.files:
+                return jsonify({'success': False, 'error': 'No file uploaded'})
+            
+            file = request.files['file']
+            markup_percent = request.form.get('markup_percent')
+            
+            if markup_percent is None:
+                return jsonify({'success': False, 'error': 'markup_percent is required'})
+            
+            try:
+                markup_percent = float(markup_percent)
+            except ValueError:
+                return jsonify({'success': False, 'error': 'markup_percent must be a valid number'})
+            
+            # Save uploaded file temporarily
+            temp_filepath = os.path.join(self.upload_folder, secure_filename(file.filename))
+            file.save(temp_filepath)
+            
+            try:
+                # Extract original filename for output naming
+                original_name = os.path.splitext(os.path.basename(temp_filepath))[0]
+                
+                # Generate output filename
+                filename = f"{markup_percent}%_markup_{original_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                output_filepath = os.path.join(self.output_folder, filename)
+                shutil.copy(temp_filepath, output_filepath)
+                
+                # Apply pure markup to the file
+                items_processed, items_failed = self._apply_pure_markup_to_file(output_filepath, markup_percent)
+                
+                # Clean up temporary file
+                os.remove(temp_filepath)
+                
+                logging.info(f"Pure markup complete: {markup_percent}% applied to {items_processed} items, {items_failed} failed")
+                
+                return jsonify({
+                    'success': True,
+                    'filename': filename,
+                    'download_url': f'/api/download/{filename}',
+                    'markup_percent': markup_percent,
+                    'items_processed': items_processed,
+                    'items_failed': items_failed
+                })
+                
+            except Exception as e:
+                # Clean up temporary file if it exists
+                if os.path.exists(temp_filepath):
+                    os.remove(temp_filepath)
+                logging.error(f"Error applying pure markup: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
         @self.app.route('/api/cleanup-session', methods=['POST'])
         def cleanup_session_route():
             """Cleanup session data and delete associated files"""
@@ -437,13 +565,11 @@ class RefactoredBOQProcessor:
                 else:
                     return jsonify({'success': False, 'error': 'Invalid session_id'})
                 
-                # Find and delete related output files (optional - files generated for this session)
-                # We'll look for files that might be related to this session's original filename
-                if original_filepath:
-                    original_basename = os.path.splitext(os.path.basename(original_filepath))[0]
+                # Delete ALL files in the output folder (complete cleanup)
+                if os.path.exists(self.output_folder):
                     for output_file in os.listdir(self.output_folder):
-                        if original_basename in output_file:
-                            output_path = os.path.join(self.output_folder, output_file)
+                        output_path = os.path.join(self.output_folder, output_file)
+                        if os.path.isfile(output_path):  # Only delete files, not subdirectories
                             try:
                                 os.remove(output_path)
                                 files_deleted.append(output_path)
@@ -532,5 +658,5 @@ class RefactoredBOQProcessor:
         self.app.run(host=host, port=port, debug=debug)
 
 if __name__ == '__main__':
-    processor = RefactoredBOQProcessor()
+    processor = App()
     processor.run()

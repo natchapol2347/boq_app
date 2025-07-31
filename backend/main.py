@@ -17,7 +17,7 @@ def setup_logging():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler('boq_processor.log')
+            logging.FileHandler('app.log')
         ]
     )
 
@@ -26,7 +26,11 @@ def reset_database_if_requested(args):
     if not args.reset_db:
         return
     
-    db_path = Path.home() / 'AppData' / 'Roaming' / 'BOQProcessor' / 'master_data.db'
+    app_root = Path(__file__).parent.parent.absolute()  # Go up to project root
+    # Database in repo root data folder
+    data_dir = app_root / 'data'
+    os.makedirs(data_dir, exist_ok=True)
+    db_path = str(data_dir / 'master_data.db')
     if db_path.exists():
         print(f"🔄 Resetting database at {db_path}")
         try:
@@ -65,10 +69,10 @@ def main():
         print("=" * 60)
         
         # Import the refactored processor
-        from refactored_boq_processor import RefactoredBOQProcessor
+        from app import App
         
         # Create and configure processor
-        processor = RefactoredBOQProcessor()
+        processor = App()
         
         # Add sample data if requested
         if args.add_sample_data:
@@ -82,19 +86,22 @@ def main():
         print("   POST /api/process-boq")
         print("   POST /api/generate-final-boq")
         print("   POST /api/apply-markup")
+        print("   POST /api/pure-markup")
         print("   POST /api/cleanup-session")
         print("   GET  /api/config/inquiry")
         print("   POST /api/config/update")
         print("   GET  /api/download/<filename>")
         print("=" * 60)
         
-        processor.run(host=args.host, port=args.port, debug=args.debug)
+        # Use 0.0.0.0 for Docker compatibility, localhost for local dev
+        host = "0.0.0.0" if os.getenv('FLASK_ENV') == 'production' else args.host
+        processor.run(host=host, port=args.port, debug=args.debug)
         
     except ImportError as e:
         print(f"❌ Import error: {e}")
         print("\n🔧 Make sure you have all required files:")
         required_files = [
-            'refactored_boq_processor.py',
+            'app.py',
             'base_sheet_processor.py',
             'interior_sheet_processor.py',
             'electrical_sheet_processor.py',
