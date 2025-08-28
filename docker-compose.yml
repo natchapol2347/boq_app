@@ -31,7 +31,9 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./storage/output:/app/storage/output                # Shared output folder only
+      - ./frontend:/app/frontend        # Mount frontend code back
+      - ./models:/app/models            # Mount models back
+      - ./storage/output:/app/storage/output
     environment:
       - STREAMLIT_SERVER_HEADLESS=true
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
