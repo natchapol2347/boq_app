@@ -11,18 +11,18 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy frontend code
-COPY frontend/ ./frontend/
-
 # Create output directory (shared with backend)
 RUN mkdir -p /app/storage/output
 
-# Expose frontend port
-EXPOSE 8501
+# Copy the admin interface file
+COPY master_data_admin.py .
 
-# Run Streamlit Frontend - use the original path
-CMD ["streamlit", "run", "frontend/frontend.py", \
+# Expose Admin port
+EXPOSE 8502
+
+# Run Streamlit Admin Interface directly
+CMD ["streamlit", "run", "master_data_admin.py", \
      "--server.address", "0.0.0.0", \
-     "--server.port", "8501", \
+     "--server.port", "8502", \
      "--server.headless", "true", \
      "--browser.gatherUsageStats", "false"]

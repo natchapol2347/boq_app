@@ -2,6 +2,7 @@
 """
 Streamlit Frontend for BOQ Processor with Download Links
 Works perfectly in Docker containers - no folder opening issues!
+Fixed to avoid recursion issues.
 """
 
 import streamlit as st
@@ -14,6 +15,16 @@ import time
 from typing import Dict, Any, Optional
 from datetime import datetime
 
+# Page configuration - this must be at the module level and called only once
+if 'page_config_set' not in st.session_state:
+    st.set_page_config(
+        page_title="📊 BOQ Processor",
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="collapsed"
+    )
+    st.session_state.page_config_set = True
+
 # Configuration - Docker network aware
 def get_backend_url():
     """Get backend URL based on environment"""
@@ -23,6 +34,7 @@ def get_backend_url():
         return "http://localhost:5000"   # Local development
 
 BACKEND_URL = get_backend_url()
+
 # Use new storage structure
 if os.getenv('STREAMLIT_SERVER_HEADLESS') == 'true':
     OUTPUT_FOLDER = Path("/app/storage/output")  # Docker path
@@ -378,524 +390,503 @@ def show_cleanup_confirmation(session_id: str):
                         if key in st.session_state:
                             del st.session_state[key]
                     time.sleep(1)
-                    st.rerun()
                 else:
                     st.error(get_text('clear_failed').format(cleanup_response.get('error', 'Unknown error')))
         
         with col2:
             if st.button(get_text('no_cancel')):
                 st.session_state.show_cleanup_confirm = False
-                st.rerun()
 
-def main():
-    """Main Streamlit application"""
-    
-    # Initialize language if not set (default to Thai)
-    if 'language' not in st.session_state:
-        st.session_state.language = 'th'
-    
-    # Page configuration
-    st.set_page_config(
-        page_title=get_text('title'),
-        page_icon="📊",
-        layout="wide",
-        initial_sidebar_state="collapsed"
+# Initialize language if not set (default to Thai)
+if 'language' not in st.session_state:
+    st.session_state.language = 'th'
+
+# Check backend connection first
+if not check_backend_connection():
+    st.error(get_text('backend_error'))
+    st.markdown(get_text('backend_instruction'))
+    st.stop()
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+.stButton > button {
+    width: 100%;
+    height: 50px;
+}
+.success-box {
+    padding: 1rem;
+    border-radius: 0.5rem;
+    background-color: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+.info-box {
+    padding: 1rem;
+    border-radius: 0.5rem;
+    background-color: #d1ecf1;
+    border: 1px solid #bee5eb;
+    color: #0c5460;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Header with language selection
+col1, col2, col3 = st.columns([3, 1, 1])
+
+with col1:
+    st.title(get_text('title'))
+    st.markdown(f"*{get_text('subtitle')}*")
+    st.success(get_text('backend_connected'))
+
+with col2:
+    # Language selector
+    current_lang = st.session_state.get('language', 'th')
+    lang_options = [LANGUAGES['th']['name'], LANGUAGES['en']['name']]
+    selected_lang_name = st.selectbox(
+        "🌐",
+        lang_options,
+        index=0 if current_lang == 'th' else 1,
+        label_visibility="collapsed"
     )
     
-    # Check backend connection first
-    if not check_backend_connection():
-        st.error(get_text('backend_error'))
-        st.markdown(get_text('backend_instruction'))
-        st.stop()
+    # Update language if changed
+    new_lang = 'th' if selected_lang_name == LANGUAGES['th']['name'] else 'en'
+    if new_lang != st.session_state.language:
+        st.session_state.language = new_lang
+
+with col3:
+    if st.button(get_text('settings'), help=get_text('settings_tooltip')):
+        st.session_state.show_settings = not st.session_state.get('show_settings', False)
+
+# Show settings panel if toggled
+if st.session_state.get('show_settings', False):
+    st.markdown("---")
+    st.header("⚙️ " + get_text('settings'))
     
-    # Custom CSS for better styling
-    st.markdown("""
-    <style>
-    .stButton > button {
-        width: 100%;
-        height: 50px;
-    }
-    .success-box {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #d4edda;
-        border: 1px solid #c3e6cb;
-        color: #155724;
-    }
-    .info-box {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #d1ecf1;
-        border: 1px solid #bee5eb;
-        color: #0c5460;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Header with language selection
-    col1, col2, col3 = st.columns([3, 1, 1])
-    
-    with col1:
-        st.title(get_text('title'))
-        st.markdown(f"*{get_text('subtitle')}*")
-        st.success(get_text('backend_connected'))
-    
-    with col2:
-        # Language selector
-        current_lang = st.session_state.get('language', 'th')
-        lang_options = [LANGUAGES['th']['name'], LANGUAGES['en']['name']]
-        selected_lang_name = st.selectbox(
-            "🌐",
-            lang_options,
-            index=0 if current_lang == 'th' else 1,
-            label_visibility="collapsed"
-        )
-        
-        # Update language if changed
-        new_lang = 'th' if selected_lang_name == LANGUAGES['th']['name'] else 'en'
-        if new_lang != st.session_state.language:
-            st.session_state.language = new_lang
-            st.rerun()
-    
-    with col3:
-        if st.button(get_text('settings'), help=get_text('settings_tooltip')):
-            st.session_state.show_settings = not st.session_state.get('show_settings', False)
-            st.rerun()
-    
-    # Show settings panel if toggled
-    if st.session_state.get('show_settings', False):
-        st.markdown("---")
-        st.header("⚙️ " + get_text('settings'))
-        
-        with st.expander("🔧 Processor Configuration", expanded=True):
-            try:
-                response = requests.get(f"{BACKEND_URL}/api/config/inquiry")
-                if response.status_code == 200:
-                    config_data = response.json()
-                    
-                    if config_data.get('success'):
-                        configs = config_data.get('configs', {})
-                        if configs:
-                            processor_names = ['interior', 'ac', 'electrical', 'fp']
-                            available_processors = [name for name in processor_names if name in configs]
+    with st.expander("🔧 Processor Configuration", expanded=True):
+        try:
+            response = requests.get(f"{BACKEND_URL}/api/config/inquiry")
+            if response.status_code == 200:
+                config_data = response.json()
+                
+                if config_data.get('success'):
+                    configs = config_data.get('configs', {})
+                    if configs:
+                        processor_names = ['interior', 'ac', 'electrical', 'fp']
+                        available_processors = [name for name in processor_names if name in configs]
+                        
+                        # Show editable processor configurations
+                        for proc_name in available_processors:
+                            proc_config = configs[proc_name]
+                            column_mapping = proc_config.get('column_mapping', {})
                             
-                            # Show editable processor configurations
-                            for proc_name in available_processors:
-                                proc_config = configs[proc_name]
-                                column_mapping = proc_config.get('column_mapping', {})
-                                
-                                with st.expander(f"🔧 {proc_name.title()} Processor", expanded=False):
-                                    # Create form for this processor
-                                    with st.form(f"config_form_{proc_name}"):
-                                        # Basic settings
-                                        st.write("**Basic Settings**")
-                                        col1, col2 = st.columns(2)
-                                        
-                                        with col1:
-                                            new_header_row = st.number_input(
-                                                "Header Row:",
-                                                min_value=0,
-                                                max_value=100,
-                                                value=proc_config.get('header_row', 0),
-                                                key=f"header_{proc_name}"
-                                            )
-                                        
-                                        with col2:
-                                            new_sheet_pattern = st.text_input(
-                                                "Sheet Pattern:",
-                                                value=proc_config.get('sheet_pattern', ''),
-                                                key=f"pattern_{proc_name}",
-                                                help="Pattern to match sheet names"
-                                            )
-                                        
-                                        # Column mapping settings
-                                        st.write("**Column Mapping** (Column numbers, 1-based)")
-                                        
-                                        # Common columns for all processors
+                            with st.expander(f"🔧 {proc_name.title()} Processor", expanded=False):
+                                # Create form for this processor
+                                with st.form(f"config_form_{proc_name}"):
+                                    # Basic settings
+                                    st.write("**Basic Settings**")
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        new_header_row = st.number_input(
+                                            "Header Row:",
+                                            min_value=0,
+                                            max_value=100,
+                                            value=proc_config.get('header_row', 0),
+                                            key=f"header_{proc_name}"
+                                        )
+                                    
+                                    with col2:
+                                        new_sheet_pattern = st.text_input(
+                                            "Sheet Pattern:",
+                                            value=proc_config.get('sheet_pattern', ''),
+                                            key=f"pattern_{proc_name}",
+                                            help="Pattern to match sheet names"
+                                        )
+                                    
+                                    # Column mapping settings
+                                    st.write("**Column Mapping** (Column numbers, 1-based)")
+                                    
+                                    # Common columns for all processors
+                                    col1, col2, col3, col4 = st.columns(4)
+                                    with col1:
+                                        new_code_col = st.number_input(
+                                            "Code Column:",
+                                            min_value=1,
+                                            max_value=50,
+                                            value=column_mapping.get('code', 2),
+                                            key=f"code_{proc_name}"
+                                        )
+                                    with col2:
+                                        new_name_col = st.number_input(
+                                            "Name Column:",
+                                            min_value=1,
+                                            max_value=50,
+                                            value=column_mapping.get('name', 3),
+                                            key=f"name_{proc_name}"
+                                        )
+                                    with col3:
+                                        new_unit_col = st.number_input(
+                                            "Unit Column:",
+                                            min_value=1,
+                                            max_value=50,
+                                            value=column_mapping.get('unit', 5),
+                                            key=f"unit_{proc_name}"
+                                        )
+                                    with col4:
+                                        new_quantity_col = st.number_input(
+                                            "Quantity Column:",
+                                            min_value=1,
+                                            max_value=50,
+                                            value=column_mapping.get('quantity', 4),
+                                            key=f"quantity_{proc_name}"
+                                        )
+                                    
+                                    # Processor-specific columns
+                                    if proc_name == 'interior':
+                                        st.write("**Interior-Specific Columns**")
                                         col1, col2, col3, col4 = st.columns(4)
                                         with col1:
-                                            new_code_col = st.number_input(
-                                                "Code Column:",
+                                            new_mat_unit_cost = st.number_input(
+                                                "Material Unit Cost:",
                                                 min_value=1,
                                                 max_value=50,
-                                                value=column_mapping.get('code', 2),
-                                                key=f"code_{proc_name}"
+                                                value=column_mapping.get('material_unit_cost', 6),
+                                                key=f"mat_unit_{proc_name}"
                                             )
                                         with col2:
-                                            new_name_col = st.number_input(
-                                                "Name Column:",
+                                            new_labor_unit_cost = st.number_input(
+                                                "Labor Unit Cost:",
                                                 min_value=1,
                                                 max_value=50,
-                                                value=column_mapping.get('name', 3),
-                                                key=f"name_{proc_name}"
+                                                value=column_mapping.get('labor_unit_cost', 7),
+                                                key=f"labor_unit_{proc_name}"
                                             )
                                         with col3:
-                                            new_unit_col = st.number_input(
-                                                "Unit Column:",
+                                            new_total_unit_cost = st.number_input(
+                                                "Total Unit Cost:",
                                                 min_value=1,
                                                 max_value=50,
-                                                value=column_mapping.get('unit', 5),
-                                                key=f"unit_{proc_name}"
+                                                value=column_mapping.get('total_unit_cost', 8),
+                                                key=f"total_unit_{proc_name}"
                                             )
                                         with col4:
-                                            new_quantity_col = st.number_input(
-                                                "Quantity Column:",
+                                            new_total_cost = st.number_input(
+                                                "Total Cost:",
                                                 min_value=1,
                                                 max_value=50,
-                                                value=column_mapping.get('quantity', 4),
-                                                key=f"quantity_{proc_name}"
+                                                value=column_mapping.get('total_cost', 9),
+                                                key=f"total_{proc_name}"
+                                            )
+                                    else:
+                                        # System processors (AC, EE, FP)
+                                        st.write("**System-Specific Columns**")
+                                        col1, col2, col3 = st.columns(3)
+                                        with col1:
+                                            new_total_row_col = st.number_input(
+                                                "Total Row Marker:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('total_row_col', 3),
+                                                key=f"total_row_{proc_name}"
+                                            )
+                                        with col2:
+                                            new_mat_unit_cost = st.number_input(
+                                                "Material Unit Cost:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('material_unit_cost', 8),
+                                                key=f"mat_unit_{proc_name}"
+                                            )
+                                        with col3:
+                                            new_mat_cost = st.number_input(
+                                                "Material Cost:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('material_cost', 9),
+                                                key=f"mat_cost_{proc_name}"
                                             )
                                         
-                                        # Processor-specific columns
+                                        col1, col2, col3 = st.columns(3)
+                                        with col1:
+                                            new_labor_unit_cost = st.number_input(
+                                                "Labor Unit Cost:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('labor_unit_cost', 10),
+                                                key=f"labor_unit_{proc_name}"
+                                            )
+                                        with col2:
+                                            new_labor_cost = st.number_input(
+                                                "Labor Cost:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('labor_cost', 11),
+                                                key=f"labor_cost_{proc_name}"
+                                            )
+                                        with col3:
+                                            new_total_cost = st.number_input(
+                                                "Total Cost:",
+                                                min_value=1,
+                                                max_value=50,
+                                                value=column_mapping.get('total_cost', 12),
+                                                key=f"total_{proc_name}"
+                                            )
+                                    
+                                    # Submit button
+                                    submitted = st.form_submit_button(f"💾 Update {proc_name.title()} Configuration", type="primary")
+                                    
+                                    if submitted:
+                                        # Build column mapping based on processor type
                                         if proc_name == 'interior':
-                                            st.write("**Interior-Specific Columns**")
-                                            col1, col2, col3, col4 = st.columns(4)
-                                            with col1:
-                                                new_mat_unit_cost = st.number_input(
-                                                    "Material Unit Cost:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('material_unit_cost', 6),
-                                                    key=f"mat_unit_{proc_name}"
-                                                )
-                                            with col2:
-                                                new_labor_unit_cost = st.number_input(
-                                                    "Labor Unit Cost:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('labor_unit_cost', 7),
-                                                    key=f"labor_unit_{proc_name}"
-                                                )
-                                            with col3:
-                                                new_total_unit_cost = st.number_input(
-                                                    "Total Unit Cost:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('total_unit_cost', 8),
-                                                    key=f"total_unit_{proc_name}"
-                                                )
-                                            with col4:
-                                                new_total_cost = st.number_input(
-                                                    "Total Cost:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('total_cost', 9),
-                                                    key=f"total_{proc_name}"
-                                                )
-                                        else:
-                                            # System processors (AC, EE, FP)
-                                            st.write("**System-Specific Columns**")
-                                            col1, col2, col3 = st.columns(3)
-                                            with col1:
-                                                new_total_row_col = st.number_input(
-                                                    "Total Row Marker:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('total_row_col', 3),
-                                                    key=f"total_row_{proc_name}"
-                                                )
-                                            with col2:
-                                                new_mat_unit_cost = st.number_input(
-                                                    "Material Unit Cost:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('material_unit_cost', 8),
-                                                    key=f"mat_unit_{proc_name}"
-                                                )
-                                            with col3:
-                                                new_mat_cost = st.number_input(
-                                                    "Material Cost:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('material_cost', 9),
-                                                    key=f"mat_cost_{proc_name}"
-                                                )
-                                            
-                                            col1, col2, col3 = st.columns(3)
-                                            with col1:
-                                                new_labor_unit_cost = st.number_input(
-                                                    "Labor Unit Cost:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('labor_unit_cost', 10),
-                                                    key=f"labor_unit_{proc_name}"
-                                                )
-                                            with col2:
-                                                new_labor_cost = st.number_input(
-                                                    "Labor Cost:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('labor_cost', 11),
-                                                    key=f"labor_cost_{proc_name}"
-                                                )
-                                            with col3:
-                                                new_total_cost = st.number_input(
-                                                    "Total Cost:",
-                                                    min_value=1,
-                                                    max_value=50,
-                                                    value=column_mapping.get('total_cost', 12),
-                                                    key=f"total_{proc_name}"
-                                                )
-                                        
-                                        # Submit button
-                                        submitted = st.form_submit_button(f"💾 Update {proc_name.title()} Configuration", type="primary")
-                                        
-                                        if submitted:
-                                            # Build column mapping based on processor type
-                                            if proc_name == 'interior':
-                                                new_column_mapping = {
-                                                    'code': new_code_col,
-                                                    'name': new_name_col,
-                                                    'unit': new_unit_col,
-                                                    'quantity': new_quantity_col,
-                                                    'material_unit_cost': new_mat_unit_cost,
-                                                    'labor_unit_cost': new_labor_unit_cost,
-                                                    'total_unit_cost': new_total_unit_cost,
-                                                    'total_cost': new_total_cost
-                                                }
-                                            else:
-                                                new_column_mapping = {
-                                                    'code': new_code_col,
-                                                    'name': new_name_col,
-                                                    'unit': new_unit_col,
-                                                    'quantity': new_quantity_col,
-                                                    'total_row_col': new_total_row_col,
-                                                    'material_unit_cost': new_mat_unit_cost,
-                                                    'material_cost': new_mat_cost,
-                                                    'labor_unit_cost': new_labor_unit_cost,
-                                                    'labor_cost': new_labor_cost,
-                                                    'total_cost': new_total_cost
-                                                }
-                                            
-                                            # Update configuration via API
-                                            update_data = {
-                                                'processor_name': proc_name,
-                                                'header_row': new_header_row,
-                                                'column_mapping': new_column_mapping
+                                            new_column_mapping = {
+                                                'code': new_code_col,
+                                                'name': new_name_col,
+                                                'unit': new_unit_col,
+                                                'quantity': new_quantity_col,
+                                                'material_unit_cost': new_mat_unit_cost,
+                                                'labor_unit_cost': new_labor_unit_cost,
+                                                'total_unit_cost': new_total_unit_cost,
+                                                'total_cost': new_total_cost
                                             }
+                                        else:
+                                            new_column_mapping = {
+                                                'code': new_code_col,
+                                                'name': new_name_col,
+                                                'unit': new_unit_col,
+                                                'quantity': new_quantity_col,
+                                                'total_row_col': new_total_row_col,
+                                                'material_unit_cost': new_mat_unit_cost,
+                                                'material_cost': new_mat_cost,
+                                                'labor_unit_cost': new_labor_unit_cost,
+                                                'labor_cost': new_labor_cost,
+                                                'total_cost': new_total_cost
+                                            }
+                                        
+                                        # Update configuration via API
+                                        update_data = {
+                                            'processor_name': proc_name,
+                                            'header_row': new_header_row,
+                                            'column_mapping': new_column_mapping
+                                        }
+                                        
+                                        try:
+                                            update_response = requests.post(
+                                                f"{BACKEND_URL}/api/config/update",
+                                                json=update_data
+                                            )
                                             
-                                            try:
-                                                update_response = requests.post(
-                                                    f"{BACKEND_URL}/api/config/update",
-                                                    json=update_data
-                                                )
-                                                
-                                                if update_response.status_code == 200:
-                                                    result = update_response.json()
-                                                    if result.get('success'):
-                                                        st.success(f"✅ {proc_name.title()} processor configuration updated successfully!")
-                                                        st.rerun()
-                                                    else:
-                                                        st.error(f"❌ Update failed: {result.get('error', 'Unknown error')}")
+                                            if update_response.status_code == 200:
+                                                result = update_response.json()
+                                                if result.get('success'):
+                                                    st.success(f"✅ {proc_name.title()} processor configuration updated successfully!")
                                                 else:
-                                                    st.error(f"❌ HTTP error: {update_response.status_code}")
-                                            
-                                            except Exception as e:
-                                                st.error(f"❌ Update error: {str(e)}")
-                                
-                                st.markdown("---")
-                        else:
-                            st.warning("No processor configurations found")
+                                                    st.error(f"❌ Update failed: {result.get('error', 'Unknown error')}")
+                                            else:
+                                                st.error(f"❌ HTTP error: {update_response.status_code}")
+                                        
+                                        except Exception as e:
+                                            st.error(f"❌ Update error: {str(e)}")
+                            
+                            st.markdown("---")
                     else:
-                        st.error("Failed to load configuration data")
+                        st.warning("No processor configurations found")
                 else:
-                    st.error(f"Backend connection failed (HTTP {response.status_code})")
-                    
-            except Exception as e:
-                st.error(f"Cannot connect to backend: {str(e)}")
-            
-            # Close settings button
-            if st.button("✖️ Close Settings"):
-                st.session_state.show_settings = False
-                st.rerun()
+                    st.error("Failed to load configuration data")
+            else:
+                st.error(f"Backend connection failed (HTTP {response.status_code})")
+                
+        except Exception as e:
+            st.error(f"Cannot connect to backend: {str(e)}")
         
-        st.markdown("---")
+        # Close settings button
+        if st.button("✖️ Close Settings"):
+            st.session_state.show_settings = False
     
-    # Initialize API client
-    api = BOQProcessorAPI()
-    
-    # Main application layout
     st.markdown("---")
+
+# Initialize API client
+api = BOQProcessorAPI()
+
+# Main application layout
+st.markdown("---")
+
+# Step 1: File Upload
+st.header(get_text('step1_title'))
+
+uploaded_file = st.file_uploader(
+    get_text('file_upload'),
+    type=['xlsx'],
+    help=get_text('file_upload_help')
+)
+
+if uploaded_file is not None:
+    # Save uploaded file temporarily
+    temp_path = Path("temp_uploads")
+    temp_path.mkdir(exist_ok=True)
     
-    # Step 1: File Upload
-    st.header(get_text('step1_title'))
-    
-    uploaded_file = st.file_uploader(
-        get_text('file_upload'),
-        type=['xlsx'],
-        help=get_text('file_upload_help')
-    )
-    
-    if uploaded_file is not None:
-        # Save uploaded file temporarily
-        temp_path = Path("temp_uploads")
-        temp_path.mkdir(exist_ok=True)
-        
-        file_path = temp_path / uploaded_file.name
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.success(get_text('file_uploaded').format(uploaded_file.name))
-        
-        with col2:
-            if st.button(get_text('process_boq'), type="primary"):
-                with st.spinner(get_text('processing')):
-                    response = api.process_boq(str(file_path))
-                
-                if response.get('success', False):
-                    st.session_state.session_id = response['session_id']
-                    st.session_state.processing_summary = response['summary']
-                    st.success(get_text('process_success'))
-                else:
-                    st.error(get_text('process_failed').format(response.get('error', 'Unknown error')))
-    
-    # Show processing summary if available
-    if 'processing_summary' in st.session_state:
-        st.markdown("---")
-        st.header(get_text('summary_title'))
-        show_processing_summary(st.session_state.processing_summary)
-        
-        # Step 2: Generate Final BOQ
-        st.markdown("---")
-        st.header(get_text('step2_title'))
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.write(get_text('step2_desc'))
-        
-        with col2:
-            if st.button(get_text('generate_final'), type="primary"):
-                with st.spinner(get_text('generating')):
-                    response = api.generate_final_boq(st.session_state.session_id)
-                
-                if response.get('success', False):
-                    st.success(get_text('generate_success').format(response['filename']))
-                    
-                    # Show download links instead of opening folder
-                    show_download_links(OUTPUT_FOLDER, response['filename'])
-                    
-                    # Show generation summary
-                    st.info(get_text('items_processed').format(response['items_processed'], response['items_failed']))
-                else:
-                    st.error(get_text('generate_failed').format(response.get('error', 'Unknown error')))
-        
-        # Step 3: Apply Markup
-        st.markdown("---")
-        st.header(get_text('step3_title'))
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            markup_percent = st.slider(
-                get_text('markup_desc'),
-                min_value=0,
-                max_value=200,
-                value=30,
-                step=5,
-                help="This will multiply all cost values by (1 + markup%/100)" if st.session_state.language == 'en' else "การดำเนินการนี้จะคูณค่าต้นทุนทั้งหมดด้วย (1 + markup%/100)"
-            )
-            st.write(get_text('markup_multiplier').format(1 + markup_percent/100))
-        
-        with col2:
-            if st.button(get_text('apply_markup').format(markup_percent), type="primary"):
-                with st.spinner(get_text('applying_markup').format(markup_percent)):
-                    response = api.apply_markup(st.session_state.session_id, markup_percent)
-                
-                if response.get('success', False):
-                    st.success(get_text('markup_success').format(markup_percent, response['filename']))
-                    
-                    # Show download links for markup file
-                    show_download_links(OUTPUT_FOLDER, response['filename'])
-                    
-                    # Show application summary
-                    st.info(get_text('markup_applied').format(response['items_processed'], response['items_failed']))
-                else:
-                    st.error(get_text('markup_failed').format(response.get('error', 'Unknown error')))
-        
-        # Cleanup section
-        st.markdown("---")
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.write(get_text('session_mgmt'))
-        
-        with col2:
-            show_cleanup_confirmation(st.session_state.session_id)
-    
-    # Pure Markup Section - Independent of main workflow
-    st.markdown("---")
-    st.header(get_text('pure_markup_title'))
+    file_path = temp_path / uploaded_file.name
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
     
     col1, col2 = st.columns([3, 1])
     
     with col1:
-        st.write(get_text('pure_markup_desc'))
-        st.info(get_text('pure_markup_help'))
+        st.success(get_text('file_uploaded').format(uploaded_file.name))
+    
+    with col2:
+        if st.button(get_text('process_boq'), type="primary"):
+            with st.spinner(get_text('processing')):
+                response = api.process_boq(str(file_path))
+            
+            if response.get('success', False):
+                st.session_state.session_id = response['session_id']
+                st.session_state.processing_summary = response['summary']
+                st.success(get_text('process_success'))
+            else:
+                st.error(get_text('process_failed').format(response.get('error', 'Unknown error')))
+
+# Show processing summary if available
+if 'processing_summary' in st.session_state:
+    st.markdown("---")
+    st.header(get_text('summary_title'))
+    show_processing_summary(st.session_state.processing_summary)
+    
+    # Step 2: Generate Final BOQ
+    st.markdown("---")
+    st.header(get_text('step2_title'))
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.write(get_text('step2_desc'))
+    
+    with col2:
+        if st.button(get_text('generate_final'), type="primary"):
+            with st.spinner(get_text('generating')):
+                response = api.generate_final_boq(st.session_state.session_id)
+            
+            if response.get('success', False):
+                st.success(get_text('generate_success').format(response['filename']))
+                
+                # Show download links instead of opening folder
+                show_download_links(OUTPUT_FOLDER, response['filename'])
+                
+                # Show generation summary
+                st.info(get_text('items_processed').format(response['items_processed'], response['items_failed']))
+            else:
+                st.error(get_text('generate_failed').format(response.get('error', 'Unknown error')))
+    
+    # Step 3: Apply Markup
+    st.markdown("---")
+    st.header(get_text('step3_title'))
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        markup_percent = st.slider(
+            get_text('markup_desc'),
+            min_value=0,
+            max_value=200,
+            value=30,
+            step=5,
+            help="This will multiply all cost values by (1 + markup%/100)" if st.session_state.language == 'en' else "การดำเนินการนี้จะคูณค่าต้นทุนทั้งหมดด้วย (1 + markup%/100)"
+        )
+        st.write(get_text('markup_multiplier').format(1 + markup_percent/100))
+    
+    with col2:
+        if st.button(get_text('apply_markup').format(markup_percent), type="primary"):
+            with st.spinner(get_text('applying_markup').format(markup_percent)):
+                response = api.apply_markup(st.session_state.session_id, markup_percent)
+            
+            if response.get('success', False):
+                st.success(get_text('markup_success').format(markup_percent, response['filename']))
+                
+                # Show download links for markup file
+                show_download_links(OUTPUT_FOLDER, response['filename'])
+                
+                # Show application summary
+                st.info(get_text('markup_applied').format(response['items_processed'], response['items_failed']))
+            else:
+                st.error(get_text('markup_failed').format(response.get('error', 'Unknown error')))
+    
+    # Cleanup section
+    st.markdown("---")
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.write(get_text('session_mgmt'))
+    
+    with col2:
+        show_cleanup_confirmation(st.session_state.session_id)
+
+# Pure Markup Section - Independent of main workflow
+st.markdown("---")
+st.header(get_text('pure_markup_title'))
+
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    st.write(get_text('pure_markup_desc'))
+    st.info(get_text('pure_markup_help'))
+
+with col2:
+    st.write("")  # Spacing
+
+# Pure markup file upload
+pure_markup_file = st.file_uploader(
+    get_text('pure_markup_upload'),
+    type=['xlsx'],
+    key="pure_markup_uploader"
+)
+
+if pure_markup_file is not None:
+    # Save the file temporarily
+    temp_path = Path("temp_uploads")
+    temp_path.mkdir(exist_ok=True)
+    
+    pure_file_path = temp_path / pure_markup_file.name
+    with open(pure_file_path, "wb") as f:
+        f.write(pure_markup_file.getbuffer())
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.success(get_text('file_uploaded').format(pure_markup_file.name))
+        
+        # Markup percentage slider
+        pure_markup_percent = st.slider(
+            get_text('markup_desc'),
+            min_value=0,
+            max_value=200,
+            value=30,
+            step=5,
+            key="pure_markup_slider",
+            help="This will multiply all cost values by (1 + markup%/100)" if st.session_state.language == 'en' else "การดำเนินการนี้จะคูณค่าต้นทุนทั้งหมดด้วย (1 + markup%/100)"
+        )
+        st.write(get_text('markup_multiplier').format(1 + pure_markup_percent/100))
     
     with col2:
         st.write("")  # Spacing
-    
-    # Pure markup file upload
-    pure_markup_file = st.file_uploader(
-        get_text('pure_markup_upload'),
-        type=['xlsx'],
-        key="pure_markup_uploader"
-    )
-    
-    if pure_markup_file is not None:
-        # Save the file temporarily
-        temp_path = Path("temp_uploads")
-        temp_path.mkdir(exist_ok=True)
-        
-        pure_file_path = temp_path / pure_markup_file.name
-        with open(pure_file_path, "wb") as f:
-            f.write(pure_markup_file.getbuffer())
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.success(get_text('file_uploaded').format(pure_markup_file.name))
+        if st.button(get_text('apply_pure_markup').format(pure_markup_percent), type="primary", key="pure_markup_apply"):
+            with st.spinner(get_text('applying_markup').format(pure_markup_percent)):
+                response = api.pure_markup(str(pure_file_path), pure_markup_percent)
             
-            # Markup percentage slider
-            pure_markup_percent = st.slider(
-                get_text('markup_desc'),
-                min_value=0,
-                max_value=200,
-                value=30,
-                step=5,
-                key="pure_markup_slider",
-                help="This will multiply all cost values by (1 + markup%/100)" if st.session_state.language == 'en' else "การดำเนินการนี้จะคูณค่าต้นทุนทั้งหมดด้วย (1 + markup%/100)"
-            )
-            st.write(get_text('markup_multiplier').format(1 + pure_markup_percent/100))
-        
-        with col2:
-            st.write("")  # Spacing
-            if st.button(get_text('apply_pure_markup').format(pure_markup_percent), type="primary", key="pure_markup_apply"):
-                with st.spinner(get_text('applying_markup').format(pure_markup_percent)):
-                    response = api.pure_markup(str(pure_file_path), pure_markup_percent)
+            if response.get('success', False):
+                st.success(get_text('pure_markup_success').format(pure_markup_percent, response['filename']))
                 
-                if response.get('success', False):
-                    st.success(get_text('pure_markup_success').format(pure_markup_percent, response['filename']))
-                    
-                    # Show download links for pure markup file
-                    show_download_links(OUTPUT_FOLDER, response['filename'])
-                    
-                    # Show application summary
-                    st.info(get_text('markup_applied').format(response['items_processed'], response['items_failed']))
-                else:
-                    st.error(get_text('pure_markup_failed').format(response.get('error', 'Unknown error')))
+                # Show download links for pure markup file
+                show_download_links(OUTPUT_FOLDER, response['filename'])
+                
+                # Show application summary
+                st.info(get_text('markup_applied').format(response['items_processed'], response['items_failed']))
+            else:
+                st.error(get_text('pure_markup_failed').format(response.get('error', 'Unknown error')))
 
-    # Footer
-    st.markdown("---")
-    st.markdown(
-        f"<div style='text-align: center; color: #666;'>{get_text('footer')}</div>",
-        unsafe_allow_html=True
-    )
-
-
-if __name__ == "__main__":
-    main()
+# Footer
+st.markdown("---")
+st.markdown(
+    f"<div style='text-align: center; color: #666;'>{get_text('footer')}</div>",
+    unsafe_allow_html=True
+)

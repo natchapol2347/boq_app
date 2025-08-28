@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Main application runner for the refactored BOQ processor.
-This is the clean entry point that handles command-line arguments and starts the server.
+Main application runner for the BOQ processor with CRUD master data management.
+No longer syncs from Excel - all data management is done through the API.
 """
 
 import os
@@ -26,11 +26,10 @@ def reset_database_if_requested(args):
     if not args.reset_db:
         return
     
-    app_root = Path(__file__).parent.parent.absolute()  # Go up to project root
-    # Database in repo root data folder
+    app_root = Path(__file__).parent.parent.absolute()
     data_dir = app_root / 'data'
-    os.makedirs(data_dir, exist_ok=True)
-    db_path = str(data_dir / 'master_data.db')
+    db_path = data_dir / 'master_data.db'
+    
     if db_path.exists():
         print(f"🔄 Resetting database at {db_path}")
         try:
@@ -42,12 +41,11 @@ def reset_database_if_requested(args):
 
 def main():
     """Main application entry point"""
-    parser = argparse.ArgumentParser(description='BOQ Processor - Refactored Version')
+    parser = argparse.ArgumentParser(description='BOQ Processor with CRUD Master Data Management')
     parser.add_argument('--reset-db', action='store_true', help='Reset the database before running')
     parser.add_argument('--port', type=int, default=5000, help='Port to run the server on')
     parser.add_argument('--host', type=str, default='localhost', help='Host to run the server on')
     parser.add_argument('--debug', action='store_true', help='Run in debug mode')
-    parser.add_argument('--add-sample-data', action='store_true', help='Add sample data to database')
     
     args = parser.parse_args()
     
@@ -59,39 +57,49 @@ def main():
     
     # Import and run the processor
     try:
-        print("🚀 Starting BOQ Processor (Refactored Version)")
-        print("=" * 60)
-        print("📋 REFACTORING PHASE:")
-        print("- Clean, organized code structure")
-        print("- Same logic as original (no behavior changes)")
-        print("- Easier debugging and maintenance")
-        print("- Ready for step-by-step improvements")
-        print("=" * 60)
+        print("🚀 Starting BOQ Processor with CRUD Master Data Management")
+        print("=" * 70)
+        print("📋 NEW FEATURES:")
+        print("- ❌ No more Excel master.xlsx sync")
+        print("- ✅ Database-driven master data management") 
+        print("- 🔧 Full CRUD API for master data")
+        print("- 🌐 Streamlit admin interface for employees")
+        print("- 📊 Real-time data updates")
+        print("- 📤 Excel import/export capabilities")
+        print("=" * 70)
         
-        # Import the refactored processor
+        # Import the updated processor
         from app import App
         
         # Create and configure processor
         processor = App()
         
-        # Add sample data if requested
-        if args.add_sample_data:
-            print("📊 Adding sample data to all processors...")
-            processor._add_sample_data()
-            print("✅ Sample data added successfully")
-        
         # Start the server
         print(f"🌐 Starting server on http://{args.host}:{args.port}")
         print("📝 Available API endpoints:")
-        print("   POST /api/process-boq")
-        print("   POST /api/generate-final-boq")
-        print("   POST /api/apply-markup")
-        print("   POST /api/pure-markup")
-        print("   POST /api/cleanup-session")
-        print("   GET  /api/config/inquiry")
-        print("   POST /api/config/update")
-        print("   GET  /api/download/<filename>")
-        print("=" * 60)
+        print("   🔧 BOQ Processing:")
+        print("      POST /api/process-boq")
+        print("      POST /api/generate-final-boq")
+        print("      POST /api/apply-markup")
+        print("      POST /api/cleanup-session")
+        print("")
+        print("   📊 Master Data CRUD:")
+        print("      GET    /api/master-data/list/<processor_type>")
+        print("      GET    /api/master-data/get/<processor_type>/<item_id>")
+        print("      POST   /api/master-data/create/<processor_type>")
+        print("      PUT    /api/master-data/update/<processor_type>/<item_id>")
+        print("      DELETE /api/master-data/delete/<processor_type>/<item_id>")
+        print("      POST   /api/master-data/bulk-import/<processor_type>")
+        print("      GET    /api/master-data/export/<processor_type>")
+        print("")
+        print("   ⚙️ Configuration:")
+        print("      GET  /api/config/inquiry")
+        print("      POST /api/config/update")
+        print("      GET  /api/download/<filename>")
+        print("")
+        print("   🎯 Admin Interface:")
+        print("      Run: streamlit run admin_master_data.py")
+        print("=" * 70)
         
         # Use 0.0.0.0 for Docker compatibility, localhost for local dev
         host = "0.0.0.0" if os.getenv('FLASK_ENV') == 'production' else args.host
@@ -102,11 +110,13 @@ def main():
         print("\n🔧 Make sure you have all required files:")
         required_files = [
             'app.py',
-            'base_sheet_processor.py',
-            'interior_sheet_processor.py',
-            'electrical_sheet_processor.py',
-            'ac_sheet_processor.py',
-            'fp_sheet_processor.py',
+            'src/processors/base_sheet_processor.py',
+            'src/processors/interior_sheet_processor.py',
+            'src/processors/electrical_sheet_processor.py',
+            'src/processors/ac_sheet_processor.py',
+            'src/processors/fp_sheet_processor.py',
+            'src/config/config_manager.py',
+            'models/config_models.py'
         ]
         
         for file in required_files:

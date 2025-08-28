@@ -1,289 +1,279 @@
-# BOQ Processor - Refactored Architecture
+# BOQ Processor - Database-Driven System 🚀
 
-This version of the BOQ processor uses a clean, modular architecture with separate processors for each sheet type, making it easier to debug and maintain.
+## 🎯 What Changed?
+
+### ❌ OLD SYSTEM:
+- Master data synced from `master.xlsx` 
+- Manual Excel file updates required
+- Data could become stale
+- No real-time updates
+
+### ✅ NEW SYSTEM:
+- **100% Database-driven** - no more Excel dependency
+- **Full CRUD API** for master data management
+- **Real-time updates** through web interface
+- **Employee-friendly admin panel**
+- **Import/Export capabilities** for bulk operations
 
 ## 🏗️ Architecture Overview
 
-The application is now organized into specialized processors:
-
-- **Base Sheet Processor**: Abstract base class defining common functionality
-- **Interior Sheet Processor**: Handles interior construction sheets (INT)
-- **Electrical Sheet Processor**: Handles electrical work sheets (EE)
-- **AC Sheet Processor**: Handles air conditioning sheets (AC)
-- **Fire Protection Sheet Processor**: Handles fire protection sheets (FP)
-- **Summary Sheet Processor**: Aggregates data from all processors
-- **Main Orchestrator**: Coordinates all processors and handles Flask routes
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Frontend      │    │   Backend API    │    │   SQLite DB     │
+│   (Streamlit)   │◄──►│   (Flask)        │◄──►│   (master_data) │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+│                       │                       │
+│ • BOQ Processing      │ • CRUD Operations     │ • interior_items
+│ • Admin Interface     │ • File Processing     │ • ee_items  
+│ • Data Management     │ • Configuration       │ • ac_items
+                        │ • Import/Export       │ • fp_items
+```
 
 ## 🚀 Quick Start
 
-### 1. Install dependencies
-
+### 1. Start the Backend
 ```bash
-poetry install
-# OR
-pip install -r requirements.txt
+python backend/main.py
+```
+This will:
+- Initialize empty database with sample data
+- Start Flask API server on http://localhost:5000
+- No more Excel sync required!
+
+### 2. Use BOQ Processing (Normal Users)
+```bash
+streamlit run frontend/frontend.py
+```
+Access at: http://localhost:8501
+- Same BOQ processing functionality
+- Upload BOQ files, generate costs, apply markup
+
+### 3. Use Admin Interface (Data Managers)
+```bash
+streamlit run admin_master_data.py
+```
+Access at: http://localhost:8502 (different port)
+- Add/Edit/Delete master data items
+- Bulk import from Excel
+- Export data to Excel
+- Real-time updates
+
+## 📊 Master Data Management
+
+### Available Operations:
+
+#### ✅ Create Items
+- Add new items via web form
+- All processor types supported (Interior, Electrical, AC, Fire Protection)
+- Real-time cost calculations
+
+#### ✏️ Edit Items  
+- Update existing items
+- Automatic total cost calculation
+- Instant database updates
+
+#### 🗑️ Delete Items
+- Safe deletion with confirmation
+- Immediate removal from system
+
+#### 📤 Bulk Import
+- Upload Excel files with master data
+- Automatic validation and error reporting
+- Support for all processor types
+
+#### 📥 Export Data
+- Download current master data as Excel
+- Perfect for backups or sharing
+
+## 🎛️ API Endpoints
+
+### Master Data CRUD
+```
+GET    /api/master-data/list/<processor_type>          # List all items
+GET    /api/master-data/get/<processor_type>/<id>      # Get specific item  
+POST   /api/master-data/create/<processor_type>        # Create new item
+PUT    /api/master-data/update/<processor_type>/<id>   # Update item
+DELETE /api/master-data/delete/<processor_type>/<id>   # Delete item
+POST   /api/master-data/bulk-import/<processor_type>   # Bulk import Excel
+GET    /api/master-data/export/<processor_type>        # Export to Excel
 ```
 
-### 2. Run the processor
-
-```bash
-python main.py
+### BOQ Processing (Unchanged)
+```
+POST /api/process-boq           # Process uploaded BOQ
+POST /api/generate-final-boq    # Generate final BOQ with costs
+POST /api/apply-markup          # Apply markup percentage
+POST /api/cleanup-session       # Clean up session data
 ```
 
-### 3. Available options
-
-```bash
-# Reset database and add sample data
-python main.py --reset-db --add-sample-data
-
-# Run on different port with debug mode
-python main.py --port 8000 --debug
-
-# Show help
-python main.py --help
+### Configuration
 ```
+GET  /api/config/inquiry        # Get current config
+POST /api/config/update         # Update processor config
+GET  /api/download/<filename>   # Download generated files
+```
+
+## 💾 Database Schema
+
+### Interior Items (interior_items)
+```sql
+internal_id TEXT PRIMARY KEY
+code TEXT                    -- รหัสรายการ
+name TEXT NOT NULL          -- ชื่อรายการ  
+material_unit_cost REAL     -- ต้นทุนวัสดุ/หน่วย
+labor_unit_cost REAL        -- ต้นทุนแรงงาน/หน่วย
+total_unit_cost REAL        -- ต้นทุนรวม/หน่วย (auto-calculated)
+unit TEXT                   -- หน่วย (ตร.ม., เมตร, ชิ้น)
+```
+
+### System Items (ee_items, ac_items, fp_items)
+```sql
+internal_id TEXT PRIMARY KEY
+code TEXT                    -- รหัสรายการ
+name TEXT NOT NULL          -- ชื่อรายการ
+material_unit_cost REAL     -- ต้นทุนวัสดุ/หน่วย  
+labor_unit_cost REAL        -- ต้นทุนแรงงาน/หน่วย
+unit TEXT                   -- หน่วย
+```
+
+## 🔧 Usage Examples
+
+### For System Administrators
+
+#### 1. Reset Database & Start Fresh
+```bash
+python backend/main.py --reset-db
+```
+This creates empty database with sample data.
+
+#### 2. Add New Interior Item via API
+```python
+import requests
+
+data = {
+    "code": "INT999",
+    "name": "กระเบื้องพอร์ซเลน 80x80",
+    "material_unit_cost": 650.0,
+    "labor_unit_cost": 280.0,
+    "unit": "ตร.ม."
+}
+
+response = requests.post("http://localhost:5000/api/master-data/create/interior", json=data)
+print(response.json())
+```
+
+#### 3. Bulk Import from Excel
+Upload Excel file with columns:
+- `code` (รหัส)
+- `name` (ชื่อรายการ)  
+- `material_unit_cost` (ต้นทุนวัสดุ)
+- `labor_unit_cost` (ต้นทุนแรงงาน)
+- `unit` (หน่วย)
+
+### For Employees
+
+1. **Access Admin Panel**: http://localhost:8502
+2. **Select Processor Type**: Interior, Electrical, AC, or Fire Protection
+3. **Manage Data**: Add, edit, delete items through user-friendly forms
+4. **Import/Export**: Use Excel files for bulk operations
+
+## 🔄 Migration from Old System
+
+### Step 1: Export Existing Data (if needed)
+If you have existing master.xlsx with important data:
+1. Start the old system once to sync data to database
+2. Use export feature to backup current data
+
+### Step 2: Switch to New System
+1. Update to new codebase
+2. Start backend: `python backend/main.py`
+3. Access admin interface for data management
+
+### Step 3: Import Your Data (if needed)
+1. Use bulk import feature in admin interface
+2. Upload your existing Excel files
+3. Verify imported data
+
+## 🎯 Benefits
+
+### For Administrators:
+✅ **No more manual Excel updates**  
+✅ **Real-time data management**  
+✅ **Better data consistency**  
+✅ **Audit trail capabilities**  
+✅ **Multi-user support**  
+
+### For Employees:
+✅ **User-friendly web interface**  
+✅ **No Excel skills required**  
+✅ **Instant updates**  
+✅ **Error validation**  
+✅ **Bulk operations support**  
+
+### For System:
+✅ **Better performance**  
+✅ **Data integrity**  
+✅ **Scalability**  
+✅ **API-first design**  
+✅ **Maintainable codebase**  
 
 ## 📁 File Structure
 
 ```
-your_project_folder/
-├── main.py                          # Main application runner
-├── app.py      # Main orchestrator
-├── base_sheet_processor.py          # Base class for all processors
-├── interior_sheet_processor.py      # Interior (INT) sheet processor
-├── electrical_sheet_processor.py    # Electrical (EE) sheet processor
-├── ac_sheet_processor.py           # Air Conditioning (AC) sheet processor
-├── fp_sheet_processor.py           # Fire Protection (FP) sheet processor
-├── summary_sheet_processor.py      # Summary aggregation processor
-├── master_data/
-│   └── master.xlsx                  # Master data file
-├── uploads/                         # Temporary upload folder
-├── output/                          # Generated BOQ files
-└── app.log               # Application log file
+your_project/
+├── backend/
+│   ├── main.py              # Updated - no Excel sync
+│   └── app.py               # Updated - with CRUD API
+├── frontend/
+│   └── frontend.py          # Unchanged - BOQ processing
+├── master_data_admin.py     # NEW - Admin interface
+├── admin_master_data.py     # NEW - Admin launcher  
+├── src/
+│   ├── processors/          # Unchanged
+│   └── config/              # Unchanged
+├── models/                  # Unchanged
+├── data/
+│   └── master_data.db       # Database file
+└── storage/
+    ├── uploads/             # Temp uploads
+    └── output/              # Generated files
 ```
 
-## 🔧 API Usage
+## 🚨 Important Notes
 
-### Process BOQ File
+1. **No master.xlsx Required**: The system no longer reads from Excel files for master data
+2. **Database Persistence**: All data is stored in SQLite database
+3. **Sample Data**: System starts with sample data for testing
+4. **Backup Recommendations**: Regular database backups recommended
+5. **Multi-user Access**: Multiple employees can use admin interface simultaneously
 
+## 🔍 Troubleshooting
+
+### Backend won't start?
 ```bash
-# Upload a BOQ file for processing
-curl -X POST -F "file=@uploads/Blank BOQ AIS ASP Zeer รังสิต-1.xlsx" http://localhost:5000/api/process-boq
+# Check Python dependencies
+pip install -r requirements.txt
+
+# Reset database if corrupted
+python backend/main.py --reset-db
 ```
 
-### Generate Final BOQ
+### Admin interface shows connection error?
+1. Make sure backend is running on http://localhost:5000
+2. Check firewall settings
+3. Verify no port conflicts
 
-```bash
-# Generate the final BOQ with the session ID returned from the previous call
-curl -X POST -H "Content-Type: application/json" -d '{"session_id": "YOUR_SESSION_ID"}' http://localhost:5000/api/generate-final-boq
-```
+### Data not updating?
+1. Check API logs in terminal
+2. Verify database write permissions
+3. Try refreshing browser
 
-### Download Generated File
+---
 
-```bash
-# Download the generated file (filename returned from generate-final-boq)
-curl -O http://localhost:5000/api/download/final_boq_TIMESTAMP.xlsx
-```
+## 🎉 Ready to Go!
 
-## 📊 Sheet Types and Configurations
+Your BOQ processor is now fully database-driven with a modern CRUD interface. No more Excel file management headaches! 
 
-### Interior Sheets (INT)
-- **Pattern**: "int" in sheet name
-- **Header row**: 9 (0-based, row 10 in Excel)
-- **Database table**: `interior_items`
-- **Column mappings**:
-  - code: Column B (2)
-  - name: Column C (3)
-  - quantity: Column D (4)
-  - unit: Column E (5)
-  - material_cost: Column F (6)
-  - labor_cost: Column G (7)
-  - total_cost: Column H (8)
+**Start with:** `python backend/main.py` and then open the admin interface for data management.
 
-### Electrical Sheets (EE)
-- **Pattern**: "ee" in sheet name
-- **Header row**: 7 (0-based, row 8 in Excel)
-- **Database table**: `ee_items`
-- **Column mappings**:
-  - code: Column B (2)
-  - name: Column C (3)
-  - unit: Column F (6)
-  - quantity: Column G (7)
-  - material_cost: Column H (8)
-  - labor_cost: Column J (10)
-  - total_cost: Column L (12)
-
-### Air Conditioning Sheets (AC)
-- **Pattern**: "ac" in sheet name
-- **Header row**: 5 (0-based, row 6 in Excel)
-- **Database table**: `ac_items`
-- **Column mappings**:
-  - code: Column B (2)
-  - name: Column C (3)
-  - unit: Column F (6)
-  - quantity: Column G (7)
-  - material_cost: Column H (8)
-  - labor_cost: Column J (10)
-  - total_cost: Column L (12)
-
-### Fire Protection Sheets (FP)
-- **Pattern**: "fp" in sheet name
-- **Header row**: 7 (0-based, row 8 in Excel)
-- **Database table**: `fp_items`
-- **Column mappings**:
-  - code: Column B (2)
-  - name: Column C (3)
-  - unit: Column F (6)
-  - quantity: Column G (7)
-  - material_cost: Column H (8)
-  - labor_cost: Column J (10)
-  - total_cost: Column L (12)
-
-### Default Sheets
-- **Used when**: No other pattern matches
-- **Header row**: 8 (0-based, row 9 in Excel)
-- **Database table**: `default_items`
-- **Column mappings**:
-  - code: Column B (2)
-  - name: Column C (3)
-  - quantity: Column D (4)
-  - unit: Column E (5)
-  - material_cost: Column F (6)
-  - labor_cost: Column G (7)
-  - total_cost: Column H (8)
-
-## 🎯 Development Approach
-
-This refactored version follows a **step-by-step improvement approach**:
-
-### Phase 1: Refactoring ✅
-- Clean, organized code structure
-- Separate processors for each sheet type
-- Same behavior as original (no logic changes)
-- Easier debugging and maintenance
-
-### Phase 2: Testing & Debugging 🔄
-- Use clean structure to identify issues
-- Debug individual processors
-- Compare with original behavior
-- Document actual problems
-
-### Phase 3: Logic Improvements 📋
-- Apply targeted fixes to specific processors
-- Improve cost calculation logic
-- Enhance fuzzy matching
-- Fix section detection
-
-## 🔍 Debugging Features
-
-### Enhanced Logging
-- Detailed logging for each processor
-- Separate log files for different components
-- Debug mode for verbose output
-
-### Database Inspection
-```bash
-# Check database contents
-python -c "
-import sqlite3
-conn = sqlite3.connect('~/AppData/Roaming/App/master_data.db')
-cursor = conn.cursor()
-cursor.execute('SELECT name FROM sqlite_master WHERE type=\"table\"')
-print('Tables:', [row[0] for row in cursor.fetchall()])
-"
-```
-
-### Individual Processor Testing
-Each processor can be tested individually:
-```python
-from interior_sheet_processor import InteriorSheetProcessor
-processor = InteriorSheetProcessor(db_path, markup_rates)
-# Test specific functionality
-```
-
-## 🛠️ Troubleshooting
-
-### Issue: No costs showing up in final BOQ
-
-1. **Reset database and add sample data**:
-   ```bash
-   python main.py --reset-db --add-sample-data
-   ```
-
-2. **Check database has cost data**:
-   ```bash
-   python -c "
-   import sqlite3
-   conn = sqlite3.connect('~/AppData/Roaming/App/master_data.db')
-   cursor = conn.cursor()
-   cursor.execute('SELECT COUNT(*) FROM interior_items WHERE material_cost > 0')
-   print('Items with costs:', cursor.fetchone()[0])
-   "
-   ```
-
-3. **Run in debug mode**:
-   ```bash
-   python main.py --debug
-   ```
-
-### Issue: Import errors
-
-Make sure all processor files are in the same directory:
-```bash
-ls -la *.py | grep processor
-```
-
-You should see:
-- `base_sheet_processor.py`
-- `interior_sheet_processor.py`
-- `electrical_sheet_processor.py`
-- `ac_sheet_processor.py`
-- `fp_sheet_processor.py`
-- `summary_sheet_processor.py`
-- `app.py`
-
-### Issue: Processing errors
-
-1. **Check log file**: `app.log`
-2. **Run with debug flag**: `python main.py --debug`
-3. **Validate master data**: Ensure `master_data/master.xlsx` exists
-
-## 🔧 Configuration
-
-### Markup Rates
-Default markup rates can be modified in `app.py`:
-```python
-self.markup_rates = {100: 1.00, 130: 1.30, 150: 1.50, 50: 0.50, 30: 0.30}
-```
-
-### Database Location
-Default database location: `~/AppData/Roaming/App/master_data.db`
-
-### File Paths
-- **Master data**: `master_data/master.xlsx`
-- **Uploads**: `uploads/` (temporary)
-- **Output**: `output/` (generated files)
-- **Logs**: `app.log`
-
-## 📝 Next Steps
-
-1. **Test the refactored version** with your existing BOQ files
-2. **Compare behavior** with the original processor
-3. **Identify specific issues** using the clean structure
-4. **Apply targeted fixes** to individual processors
-5. **Enhance functionality** incrementally
-
-## 🤝 Contributing
-
-When modifying the code:
-1. **Follow the processor pattern** - each sheet type has its own processor
-2. **Update the base class** for common functionality
-3. **Test individual processors** before integration
-4. **Maintain backward compatibility** with existing APIs
-5. **Document changes** in this README
-
-## 📚 Additional Resources
-
-- **Original Logic**: Reference `hard_coded_boq_fixed.py` for original implementation
-- **Business Logic**: See `CLAUDE.md` for detailed business requirements
-- **Development Guide**: Follow the step-by-step approach outlined above
+Happy processing! 📊✨

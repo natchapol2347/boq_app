@@ -34,14 +34,14 @@ from models.config_models import (
 logging.basicConfig(level=logging.DEBUG)
 
 class App:
-    """Main BOQ processor that orchestrates all sheet-specific processors"""
+    """Main BOQ processor with CRUD API for master data management"""
     
     def __init__(self):
         self.app = Flask(__name__)
         CORS(self.app)
         
         # Setup directories - repo root only
-        self.app_root = Path(__file__).parent.parent.absolute()  # Go up to project root
+        self.app_root = Path(__file__).parent.parent.absolute()
         
         # Database in repo root data folder
         self.data_dir = self.app_root / 'data'
@@ -52,17 +52,11 @@ class App:
         self.processing_sessions = {}
         
         # Folder setup - all in repo root
-        self.master_data_folder = str(self.app_root / 'master_data')
         self.upload_folder = str(self.app_root / 'storage' / 'uploads')
         self.output_folder = str(self.app_root / 'storage' / 'output')
         
         # Create all necessary directories
-        folders = [
-            self.master_data_folder, 
-            self.upload_folder, 
-            self.output_folder,
-            str(self.data_dir)
-        ]
+        folders = [self.upload_folder, self.output_folder, str(self.data_dir)]
         for folder in folders:
             os.makedirs(folder, exist_ok=True)
         
@@ -81,15 +75,14 @@ class App:
             FPSheetProcessor(self.db_path, self.markup_rates, configs.fp)
         ]
         
-        # Initialize database and sync master data
+        # Initialize database (no Excel sync)
         self._init_database()
-        self._sync_master_data()
         
         # Setup Flask routes
         self.setup_routes()
     
     def _init_database(self):
-        """Initialize database with all required tables"""
+        """Initialize database with all required tables (no Excel sync)"""
         logging.info(f"Initializing database at {self.db_path}")
         
         with sqlite3.connect(self.db_path) as conn:
@@ -102,43 +95,93 @@ class App:
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
             tables = [row[0] for row in cursor.fetchall()]
             logging.info(f"Database tables created: {tables}")
+            
+            # Add sample data if tables are empty (only once)
+            self._add_sample_data_if_empty(conn)
     
-    def _sync_master_data(self):
-        """Sync master data from Excel files to database"""
-        master_excel_path = os.path.join(self.master_data_folder, 'master.xlsx')
+    def _add_sample_data_if_empty(self, conn):
+        """Add sample data only if tables are completely empty"""
+        cursor = conn.cursor()
         
-        if not os.path.exists(master_excel_path):
-            logging.error(f"Master Excel file not found at {master_excel_path}")
-            return
+        # Check if any table has data
+        has_data = False
+        for processor in self.sheet_processors:
+            cursor.execute(f"SELECT COUNT(*) FROM {processor.table_name}")
+            count = cursor.fetchone()[0]
+            if count > 0:
+                has_data = True
+                break
         
-        logging.info(f"Synchronizing master data from {master_excel_path}")
+        if not has_data:
+            logging.info("Adding sample data to empty database...")
+            self._add_sample_data(conn)
+    
+    def _add_sample_data(self, conn):
+        """Add sample data for testing purposes"""
+        cursor = conn.cursor()
         
-        try:
-            excel_file = pd.ExcelFile(master_excel_path)
-            sheet_names = excel_file.sheet_names
-            logging.info(f"Found {len(sheet_names)} sheets: {sheet_names}")
-            
-            for sheet_name in sheet_names:
-                # Find the appropriate processor for this sheet
-                processor = self._find_processor_for_sheet(sheet_name)
-                if not processor:
-                    logging.warning(f"No processor found for sheet: {sheet_name}")
-                    continue
-                
-                logging.info(f"Processing sheet {sheet_name} with {processor.__class__.__name__}")
-                
-                # Read and process the sheet
-                df = pd.read_excel(master_excel_path, sheet_name=sheet_name, header=processor.header_row)
-                processed_df = processor.process_master_sheet(df)
-                
-                if not processed_df.empty:
-                    processor.sync_to_database(processed_df)
-                else:
-                    logging.warning(f"No data processed for sheet: {sheet_name}")
-            
-     
-        except Exception as e:
-            logging.error(f"Error synchronizing master data: {e}", exc_info=True)
+        # Sample interior items
+        interior_samples = [
+            ('INT001', 'ปูกระเบื้อง 60x60 ซม.', 450.0, 200.0, 'ตร.ม.'),
+            ('INT002', 'ทาสีผนังภายใน', 80.0, 120.0, 'ตร.ม.'),
+            ('INT003', 'ติดตั้งประตูไม้', 2500.0, 800.0, 'บาน'),
+            ('INT004', 'ติดตั้งหน้าต่างอลูมิเนียม', 1800.0, 600.0, 'ตร.ม.'),
+            ('INT005', 'ทำฝ้าเพดานทีบาร์', 320.0, 180.0, 'ตร.ม.')
+        ]
+        
+        for code, name, mat_cost, lab_cost, unit in interior_samples:
+            cursor.execute(
+                "INSERT OR IGNORE INTO interior_items (internal_id, code, name, material_unit_cost, labor_unit_cost, total_unit_cost, unit) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (f"item_{uuid.uuid4().hex[:8]}", code, name, mat_cost, lab_cost, mat_cost + lab_cost, unit)
+            )
+        
+        # Sample electrical items
+        electrical_samples = [
+            ('EE001', 'เดินสายไฟ VCT 2x2.5', 35.0, 25.0, 'เมตร'),
+            ('EE002', 'ติดตั้งเต้าเสียบ 3 รู', 150.0, 100.0, 'จุด'),
+            ('EE003', 'ติดตั้งสวิทช์เปิด-ปิด', 120.0, 80.0, 'จุด'),
+            ('EE004', 'ติดตั้งโคมไฟ LED 18W', 380.0, 120.0, 'ดวง'),
+            ('EE005', 'ติดตั้งเบรกเกอร์ 32A', 280.0, 150.0, 'ตัว')
+        ]
+        
+        for code, name, mat_cost, lab_cost, unit in electrical_samples:
+            cursor.execute(
+                "INSERT OR IGNORE INTO ee_items (internal_id, code, name, material_unit_cost, labor_unit_cost, unit) VALUES (?, ?, ?, ?, ?, ?)",
+                (f"item_{uuid.uuid4().hex[:8]}", code, name, mat_cost, lab_cost, unit)
+            )
+        
+        # Sample AC items
+        ac_samples = [
+            ('AC001', 'แอร์ติดผนัง 12000 BTU', 18000.0, 2500.0, 'เครื่อง'),
+            ('AC002', 'แอร์ติดผนัง 18000 BTU', 22000.0, 3000.0, 'เครื่อง'),
+            ('AC003', 'เดินท่อแอร์ 1/2 นิ้ว', 180.0, 120.0, 'เมตร'),
+            ('AC004', 'เดินสายไฟแอร์ 3x2.5', 45.0, 35.0, 'เมตร'),
+            ('AC005', 'ติดตั้งรีโมทแอร์', 150.0, 100.0, 'ตัว')
+        ]
+        
+        for code, name, mat_cost, lab_cost, unit in ac_samples:
+            cursor.execute(
+                "INSERT OR IGNORE INTO ac_items (internal_id, code, name, material_unit_cost, labor_unit_cost, unit) VALUES (?, ?, ?, ?, ?, ?)",
+                (f"item_{uuid.uuid4().hex[:8]}", code, name, mat_cost, lab_cost, unit)
+            )
+        
+        # Sample FP items
+        fp_samples = [
+            ('FP001', 'หัวดับเพลิง Sprinkler', 180.0, 120.0, 'หัว'),
+            ('FP002', 'ท่อดับเพลิง 2 นิ้ว', 120.0, 80.0, 'เมตร'),
+            ('FP003', 'วาล์วดับเพลิง', 2500.0, 800.0, 'ตัว'),
+            ('FP004', 'ตู้เครื่องสูบน้ำ', 25000.0, 5000.0, 'ชุด'),
+            ('FP005', 'เซ็นเซอร์ควัน', 450.0, 200.0, 'ตัว')
+        ]
+        
+        for code, name, mat_cost, lab_cost, unit in fp_samples:
+            cursor.execute(
+                "INSERT OR IGNORE INTO fp_items (internal_id, code, name, material_unit_cost, labor_unit_cost, unit) VALUES (?, ?, ?, ?, ?, ?)",
+                (f"item_{uuid.uuid4().hex[:8]}", code, name, mat_cost, lab_cost, unit)
+            )
+        
+        conn.commit()
+        logging.info("Sample data added to all tables")
     
     def _find_processor_for_sheet(self, sheet_name: str):
         """Find the appropriate processor for a given sheet name"""
@@ -147,70 +190,23 @@ class App:
                 return processor
         return None
     
-    def _apply_pure_markup_to_file(self, filepath: str, markup_percent: float) -> tuple[int, int]:
-        """Apply markup directly to cost columns in Excel file without session data"""
-        items_processed = 0
-        items_failed = 0
-        markup_multiplier = 1 + (markup_percent / 100)
+    def _find_processor_by_type(self, processor_type: str):
+        """Find processor by type name"""
+        type_mapping = {
+            'interior': 'InteriorSheetProcessor',
+            'electrical': 'ElectricalSheetProcessor', 
+            'ac': 'ACSheetProcessor',
+            'fp': 'FPSheetProcessor'
+        }
         
-        try:
-            workbook = openpyxl.load_workbook(filepath)
+        target_class = type_mapping.get(processor_type)
+        if not target_class:
+            return None
             
-            for sheet_name in workbook.sheetnames:
-                # Find processor for this sheet to get column mapping
-                processor = self._find_processor_for_sheet(sheet_name)
-                if not processor:
-                    logging.info(f"No processor found for sheet: {sheet_name} - skipping markup")
-                    continue
-                
-                worksheet = workbook[sheet_name]
-                column_mapping = processor.column_mapping
-                
-                # Cost columns to apply markup to
-                cost_columns = [
-                    'material_unit_cost',
-                    'labor_unit_cost', 
-                    'total_unit_cost',
-                    'total_cost'
-                ]
-                
-                # Apply markup to each cost column
-                for cost_col in cost_columns:
-                    if cost_col not in column_mapping:
-                        continue
-                    
-                    col_num = column_mapping[cost_col]
-                    
-                    # Process all rows in this column (skip header)
-                    for row in range(processor.header_row + 2, worksheet.max_row + 1):  # +2 because header_row is 0-based
-                        try:
-                            cell = worksheet.cell(row=row, column=col_num)
-                            current_value = cell.value
-                            
-                            # Apply markup only to numeric values
-                            if isinstance(current_value, (int, float)) and current_value != 0:
-                                new_value = round(current_value * markup_multiplier, 2)
-                                cell.value = new_value
-                                items_processed += 1
-                                logging.debug(f"Applied {markup_percent}% markup to {sheet_name} row {row}, col {col_num}: {current_value} -> {new_value}")
-                        
-                        except Exception as e:
-                            items_failed += 1
-                            logging.error(f"Error applying markup to {sheet_name} row {row}, col {col_num}: {e}")
-            
-            # Save the modified workbook
-            workbook.save(filepath)
-            workbook.close()
-            
-            logging.info(f"Pure markup applied: {items_processed} items processed, {items_failed} failed")
-            
-        except Exception as e:
-            logging.error(f"Error in _apply_pure_markup_to_file: {e}", exc_info=True)
-            raise
-        
-        return items_processed, items_failed
-    
-    
+        for processor in self.sheet_processors:
+            if processor.__class__.__name__ == target_class:
+                return processor
+        return None
     
     def store_processing_session(self, session_id: str, data: Dict[str, Any]):
         """Store processing session data"""
@@ -232,9 +228,11 @@ class App:
             logging.info("Sheet processors reloaded with updated configuration")
         except Exception as e:
             logging.error(f"Error reloading sheet processors: {e}", exc_info=True)
-    
+
     def setup_routes(self):
-        """Setup Flask routes"""
+        """Setup Flask routes including new CRUD endpoints"""
+        
+        # ========== EXISTING BOQ PROCESSING ROUTES ==========
         
         @self.app.route('/api/process-boq', methods=['POST'])
         def process_boq_route():
@@ -250,14 +248,11 @@ class App:
                 excel_file = pd.ExcelFile(filepath)
                 session_data = {'sheets': {}, 'original_filepath': filepath}
                 
-                # Get all sheets to process
                 sheets_to_process = excel_file.sheet_names
-                
                 total_items = 0
                 total_matches = 0
                 
                 for sheet_name in sheets_to_process:
-                    # Find appropriate processor
                     processor = self._find_processor_for_sheet(sheet_name)
                     if not processor:
                         logging.info(f"No processor found for sheet: {sheet_name} - skipping")
@@ -265,35 +260,25 @@ class App:
                     
                     logging.info(f"Processing BOQ sheet: {sheet_name} with {processor.__class__.__name__}")
                     
-                    # Read sheet data
                     df = pd.read_excel(filepath, sheet_name=sheet_name, header=processor.header_row)
-                    
-                    # Process the sheet (find matches)
                     processed_items = processor.process_boq_sheet(df)
                     
-                    # Pre-calculate section boundaries and store them
                     try:
-                        # Read the Excel sheet for section analysis
                         temp_workbook = openpyxl.load_workbook(filepath, data_only=False)
                         temp_worksheet = temp_workbook[sheet_name]
-                        
-                        # Find section structure only (no cost calculation)
                         sections = processor.find_section_structure(temp_worksheet, temp_worksheet.max_row)
                         temp_workbook.close()
-                        
                         logging.info(f"Pre-calculated {len(sections)} sections for {sheet_name}")
-                        
                     except Exception as e:
                         logging.warning(f"Could not pre-calculate sections for {sheet_name}: {e}")
                         sections = {}
                     
-                    # Store enhanced sheet data
                     session_data['sheets'][sheet_name] = {
                         'processor_type': processor.__class__.__name__,
                         'header_row': processor.header_row,
                         'processed_matches': {item['original_row_index']: item['match'] for item in processed_items},
                         'row_details': {item['original_row_index']: {'code': item['row_code'], 'name': item['row_name']} for item in processed_items},
-                        'sections': sections,  
+                        'sections': sections,
                         'total_rows': len(df),
                         'matched_count': len(processed_items)
                     }
@@ -301,7 +286,6 @@ class App:
                     total_items += len(df)
                     total_matches += len(processed_items)
                 
-                # Store session
                 session_id = str(uuid.uuid4())
                 self.store_processing_session(session_id, session_data)
                 
@@ -334,16 +318,13 @@ class App:
             markup_options = data.get('markup_options', [30, 50, 100, 130, 150])
             
             try:
-                # Generate output filename
                 filename = f"final_boq_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
                 output_filepath = os.path.join(self.output_folder, filename)
                 shutil.copy(original_filepath, output_filepath)
                 
-                # Open workbooks
                 workbook = openpyxl.load_workbook(output_filepath)
                 data_workbook = openpyxl.load_workbook(original_filepath, data_only=True)
                 
-                # Process each sheet
                 items_processed = 0
                 items_failed = 0
                 processing_summary = {}
@@ -352,7 +333,6 @@ class App:
                     if sheet_name not in workbook.sheetnames:
                         continue
                     
-                    # Find the processor for this sheet
                     processor = self._find_processor_for_sheet(sheet_name)
                     if not processor:
                         logging.warning(f"No processor found for sheet: {sheet_name}")
@@ -360,7 +340,6 @@ class App:
                     
                     logging.info(f"Generating costs for sheet: {sheet_name}")
                     
-                    # Process the sheet - Let processor handle everything
                     sheet_result = processor.process_final_sheet(
                         worksheet=workbook[sheet_name], 
                         data_worksheet=data_workbook[sheet_name],
@@ -372,13 +351,9 @@ class App:
                     items_failed += sheet_result['items_failed']
                     processing_summary[sheet_name] = sheet_result
                 
-                # Save workbook
                 workbook.save(output_filepath)
                 workbook.close()
                 data_workbook.close()
-                
-                # Keep session alive for potential markup application
-                # No cleanup here - user might want to apply markup next
                 
                 logging.info(f"Processing complete: {items_processed} items processed, {items_failed} failed")
                 
@@ -397,7 +372,7 @@ class App:
         
         @self.app.route('/api/apply-markup', methods=['POST'])
         def apply_markup_route():
-            """Apply markup directly to all values in all sheets (not just display columns)"""
+            """Apply markup directly to all values in all sheets"""
             data = request.get_json()
             session_id = data.get('session_id')
             markup_percent = data.get('markup_percent')
@@ -412,19 +387,14 @@ class App:
             original_filepath = session_data['original_filepath']
             
             try:
-                # Extract original filename without extension for better naming
                 original_name = os.path.splitext(os.path.basename(original_filepath))[0]
-                
-                # Generate output filename with markup percentage and original name
                 filename = f"{markup_percent}%_{original_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
                 output_filepath = os.path.join(self.output_folder, filename)
                 shutil.copy(original_filepath, output_filepath)
                 
-                # Open workbooks
                 workbook = openpyxl.load_workbook(output_filepath)
                 data_workbook = openpyxl.load_workbook(original_filepath, data_only=True)
                 
-                # Process each sheet with markup application flag
                 items_processed = 0
                 items_failed = 0
                 processing_summary = {}
@@ -433,7 +403,6 @@ class App:
                     if sheet_name not in workbook.sheetnames:
                         continue
                     
-                    # Find the processor for this sheet
                     processor = self._find_processor_for_sheet(sheet_name)
                     if not processor:
                         logging.warning(f"No processor found for sheet: {sheet_name}")
@@ -441,26 +410,21 @@ class App:
                     
                     logging.info(f"Applying {markup_percent}% markup to sheet: {sheet_name}")
                     
-                    # Process the sheet with markup application flag
                     sheet_result = processor.process_final_sheet(
                         worksheet=workbook[sheet_name], 
                         data_worksheet=data_workbook[sheet_name],
                         sheet_info=sheet_info,
-                        markup_options=[],  # Empty list since we're applying markup, not displaying it
-                        apply_markup_percent=markup_percent  # New parameter
+                        markup_options=[],
+                        apply_markup_percent=markup_percent
                     )
                     
                     items_processed += sheet_result['items_processed']
                     items_failed += sheet_result['items_failed']
                     processing_summary[sheet_name] = sheet_result
                 
-                # Save workbook
                 workbook.save(output_filepath)
                 workbook.close()
                 data_workbook.close()
-                
-                # Keep session alive - user may want to apply different markup rates
-                # Session will be cleaned up when app closes or via cleanup-session endpoint
                 
                 logging.info(f"Markup application complete: {markup_percent}% applied to {items_processed} items, {items_failed} failed")
                 
@@ -478,60 +442,6 @@ class App:
                 logging.error(f"Error applying markup: {e}", exc_info=True)
                 return jsonify({'success': False, 'error': str(e)})
         
-        @self.app.route('/api/pure-markup', methods=['POST'])
-        def pure_markup_route():
-            """Apply markup to any BOQ file without session dependency"""
-            if 'file' not in request.files:
-                return jsonify({'success': False, 'error': 'No file uploaded'})
-            
-            file = request.files['file']
-            markup_percent = request.form.get('markup_percent')
-            
-            if markup_percent is None:
-                return jsonify({'success': False, 'error': 'markup_percent is required'})
-            
-            try:
-                markup_percent = float(markup_percent)
-            except ValueError:
-                return jsonify({'success': False, 'error': 'markup_percent must be a valid number'})
-            
-            # Save uploaded file temporarily
-            temp_filepath = os.path.join(self.upload_folder, secure_filename(file.filename))
-            file.save(temp_filepath)
-            
-            try:
-                # Extract original filename for output naming
-                original_name = os.path.splitext(os.path.basename(temp_filepath))[0]
-                
-                # Generate output filename
-                filename = f"{markup_percent}%_markup_{original_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                output_filepath = os.path.join(self.output_folder, filename)
-                shutil.copy(temp_filepath, output_filepath)
-                
-                # Apply pure markup to the file
-                items_processed, items_failed = self._apply_pure_markup_to_file(output_filepath, markup_percent)
-                
-                # Clean up temporary file
-                os.remove(temp_filepath)
-                
-                logging.info(f"Pure markup complete: {markup_percent}% applied to {items_processed} items, {items_failed} failed")
-                
-                return jsonify({
-                    'success': True,
-                    'filename': filename,
-                    'download_url': f'/api/download/{filename}',
-                    'markup_percent': markup_percent,
-                    'items_processed': items_processed,
-                    'items_failed': items_failed
-                })
-                
-            except Exception as e:
-                # Clean up temporary file if it exists
-                if os.path.exists(temp_filepath):
-                    os.remove(temp_filepath)
-                logging.error(f"Error applying pure markup: {e}", exc_info=True)
-                return jsonify({'success': False, 'error': str(e)})
-        
         @self.app.route('/api/cleanup-session', methods=['POST'])
         def cleanup_session_route():
             """Cleanup session data and delete associated files"""
@@ -545,12 +455,10 @@ class App:
             errors = []
             
             try:
-                # Get session data before deletion
                 if session_id in self.processing_sessions:
                     session_data = self.processing_sessions[session_id]['data']
                     original_filepath = session_data.get('original_filepath')
                     
-                    # Delete original uploaded file
                     if original_filepath and os.path.exists(original_filepath):
                         try:
                             os.remove(original_filepath)
@@ -559,17 +467,15 @@ class App:
                         except Exception as e:
                             errors.append(f"Failed to delete {original_filepath}: {e}")
                     
-                    # Delete session from memory
                     del self.processing_sessions[session_id]
                     logging.info(f"Cleaned up session: {session_id}")
                 else:
                     return jsonify({'success': False, 'error': 'Invalid session_id'})
                 
-                # Delete ALL files in the output folder (complete cleanup)
                 if os.path.exists(self.output_folder):
                     for output_file in os.listdir(self.output_folder):
                         output_path = os.path.join(self.output_folder, output_file)
-                        if os.path.isfile(output_path):  # Only delete files, not subdirectories
+                        if os.path.isfile(output_path):
                             try:
                                 os.remove(output_path)
                                 files_deleted.append(output_path)
@@ -588,6 +494,318 @@ class App:
             except Exception as e:
                 logging.error(f"Error during cleanup: {e}", exc_info=True)
                 return jsonify({'success': False, 'error': str(e)})
+        
+        # ========== NEW MASTER DATA CRUD ROUTES ==========
+        
+        @self.app.route('/api/master-data/list/<processor_type>', methods=['GET'])
+        def list_master_data(processor_type):
+            """List all master data items for a specific processor type"""
+            try:
+                processor = self._find_processor_by_type(processor_type)
+                if not processor:
+                    return jsonify({'success': False, 'error': f'Invalid processor type: {processor_type}'})
+                
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    cursor.execute(f"SELECT * FROM {processor.table_name} ORDER BY code, name")
+                    items = [dict(row) for row in cursor.fetchall()]
+                
+                return jsonify({
+                    'success': True,
+                    'processor_type': processor_type,
+                    'table_name': processor.table_name,
+                    'items': items,
+                    'count': len(items)
+                })
+                
+            except Exception as e:
+                logging.error(f"Error listing master data: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
+        @self.app.route('/api/master-data/get/<processor_type>/<item_id>', methods=['GET'])
+        def get_master_data_item(processor_type, item_id):
+            """Get a specific master data item"""
+            try:
+                processor = self._find_processor_by_type(processor_type)
+                if not processor:
+                    return jsonify({'success': False, 'error': f'Invalid processor type: {processor_type}'})
+                
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    cursor.execute(f"SELECT * FROM {processor.table_name} WHERE internal_id = ?", (item_id,))
+                    item = cursor.fetchone()
+                
+                if item:
+                    return jsonify({
+                        'success': True,
+                        'item': dict(item)
+                    })
+                else:
+                    return jsonify({'success': False, 'error': 'Item not found'})
+                    
+            except Exception as e:
+                logging.error(f"Error getting master data item: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
+        @self.app.route('/api/master-data/create/<processor_type>', methods=['POST'])
+        def create_master_data_item(processor_type):
+            """Create a new master data item"""
+            try:
+                processor = self._find_processor_by_type(processor_type)
+                if not processor:
+                    return jsonify({'success': False, 'error': f'Invalid processor type: {processor_type}'})
+                
+                data = request.get_json()
+                
+                # Generate internal ID
+                internal_id = f"item_{uuid.uuid4().hex[:8]}"
+                
+                # Validate required fields
+                if not data.get('name'):
+                    return jsonify({'success': False, 'error': 'Name is required'})
+                
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    if processor_type == 'interior':
+                        cursor.execute(
+                            f"INSERT INTO {processor.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, total_unit_cost, unit) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                internal_id,
+                                data.get('code', ''),
+                                data.get('name'),
+                                float(data.get('material_unit_cost', 0)),
+                                float(data.get('labor_unit_cost', 0)),
+                                float(data.get('material_unit_cost', 0)) + float(data.get('labor_unit_cost', 0)),
+                                data.get('unit', '')
+                            )
+                        )
+                    else:
+                        cursor.execute(
+                            f"INSERT INTO {processor.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, unit) VALUES (?, ?, ?, ?, ?, ?)",
+                            (
+                                internal_id,
+                                data.get('code', ''),
+                                data.get('name'),
+                                float(data.get('material_unit_cost', 0)),
+                                float(data.get('labor_unit_cost', 0)),
+                                data.get('unit', '')
+                            )
+                        )
+                    
+                    conn.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'Item created successfully',
+                    'internal_id': internal_id
+                })
+                
+            except Exception as e:
+                logging.error(f"Error creating master data item: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
+        @self.app.route('/api/master-data/update/<processor_type>/<item_id>', methods=['PUT'])
+        def update_master_data_item(processor_type, item_id):
+            """Update an existing master data item"""
+            try:
+                processor = self._find_processor_by_type(processor_type)
+                if not processor:
+                    return jsonify({'success': False, 'error': f'Invalid processor type: {processor_type}'})
+                
+                data = request.get_json()
+                
+                # Validate required fields
+                if not data.get('name'):
+                    return jsonify({'success': False, 'error': 'Name is required'})
+                
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    # Check if item exists
+                    cursor.execute(f"SELECT internal_id FROM {processor.table_name} WHERE internal_id = ?", (item_id,))
+                    if not cursor.fetchone():
+                        return jsonify({'success': False, 'error': 'Item not found'})
+                    
+                    if processor_type == 'interior':
+                        total_unit_cost = float(data.get('material_unit_cost', 0)) + float(data.get('labor_unit_cost', 0))
+                        cursor.execute(
+                            f"UPDATE {processor.table_name} SET code = ?, name = ?, material_unit_cost = ?, labor_unit_cost = ?, total_unit_cost = ?, unit = ? WHERE internal_id = ?",
+                            (
+                                data.get('code', ''),
+                                data.get('name'),
+                                float(data.get('material_unit_cost', 0)),
+                                float(data.get('labor_unit_cost', 0)),
+                                total_unit_cost,
+                                data.get('unit', ''),
+                                item_id
+                            )
+                        )
+                    else:
+                        cursor.execute(
+                            f"UPDATE {processor.table_name} SET code = ?, name = ?, material_unit_cost = ?, labor_unit_cost = ?, unit = ? WHERE internal_id = ?",
+                            (
+                                data.get('code', ''),
+                                data.get('name'),
+                                float(data.get('material_unit_cost', 0)),
+                                float(data.get('labor_unit_cost', 0)),
+                                data.get('unit', ''),
+                                item_id
+                            )
+                        )
+                    
+                    conn.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'Item updated successfully'
+                })
+                
+            except Exception as e:
+                logging.error(f"Error updating master data item: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
+        @self.app.route('/api/master-data/delete/<processor_type>/<item_id>', methods=['DELETE'])
+        def delete_master_data_item(processor_type, item_id):
+            """Delete a master data item"""
+            try:
+                processor = self._find_processor_by_type(processor_type)
+                if not processor:
+                    return jsonify({'success': False, 'error': f'Invalid processor type: {processor_type}'})
+                
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    # Check if item exists
+                    cursor.execute(f"SELECT internal_id FROM {processor.table_name} WHERE internal_id = ?", (item_id,))
+                    if not cursor.fetchone():
+                        return jsonify({'success': False, 'error': 'Item not found'})
+                    
+                    # Delete the item
+                    cursor.execute(f"DELETE FROM {processor.table_name} WHERE internal_id = ?", (item_id,))
+                    conn.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'Item deleted successfully'
+                })
+                
+            except Exception as e:
+                logging.error(f"Error deleting master data item: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
+        @self.app.route('/api/master-data/bulk-import/<processor_type>', methods=['POST'])
+        def bulk_import_master_data(processor_type):
+            """Bulk import master data from uploaded Excel file"""
+            try:
+                processor = self._find_processor_by_type(processor_type)
+                if not processor:
+                    return jsonify({'success': False, 'error': f'Invalid processor type: {processor_type}'})
+                
+                if 'file' not in request.files:
+                    return jsonify({'success': False, 'error': 'No file uploaded'})
+                
+                file = request.files['file']
+                filepath = os.path.join(self.upload_folder, secure_filename(file.filename))
+                file.save(filepath)
+                
+                # Read Excel file
+                df = pd.read_excel(filepath, header=0)
+                
+                imported_count = 0
+                errors = []
+                
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    for idx, row in df.iterrows():
+                        try:
+                            internal_id = f"import_{uuid.uuid4().hex[:8]}"
+                            
+                            if processor_type == 'interior':
+                                mat_cost = float(row.get('material_unit_cost', 0))
+                                lab_cost = float(row.get('labor_unit_cost', 0))
+                                cursor.execute(
+                                    f"INSERT INTO {processor.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, total_unit_cost, unit) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                    (
+                                        internal_id,
+                                        str(row.get('code', '')),
+                                        str(row.get('name', '')),
+                                        mat_cost,
+                                        lab_cost,
+                                        mat_cost + lab_cost,
+                                        str(row.get('unit', ''))
+                                    )
+                                )
+                            else:
+                                cursor.execute(
+                                    f"INSERT INTO {processor.table_name} (internal_id, code, name, material_unit_cost, labor_unit_cost, unit) VALUES (?, ?, ?, ?, ?, ?)",
+                                    (
+                                        internal_id,
+                                        str(row.get('code', '')),
+                                        str(row.get('name', '')),
+                                        float(row.get('material_unit_cost', 0)),
+                                        float(row.get('labor_unit_cost', 0)),
+                                        str(row.get('unit', ''))
+                                    )
+                                )
+                            
+                            imported_count += 1
+                            
+                        except Exception as e:
+                            errors.append(f"Row {idx + 2}: {str(e)}")
+                    
+                    conn.commit()
+                
+                # Clean up uploaded file
+                os.remove(filepath)
+                
+                return jsonify({
+                    'success': True,
+                    'message': f'Bulk import completed',
+                    'imported_count': imported_count,
+                    'errors': errors
+                })
+                
+            except Exception as e:
+                logging.error(f"Error in bulk import: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
+        @self.app.route('/api/master-data/export/<processor_type>', methods=['GET'])
+        def export_master_data(processor_type):
+            """Export master data to Excel file"""
+            try:
+                processor = self._find_processor_by_type(processor_type)
+                if not processor:
+                    return jsonify({'success': False, 'error': f'Invalid processor type: {processor_type}'})
+                
+                with sqlite3.connect(self.db_path) as conn:
+                    df = pd.read_sql_query(f"SELECT * FROM {processor.table_name}", conn)
+                
+                if df.empty:
+                    return jsonify({'success': False, 'error': 'No data to export'})
+                
+                # Generate export filename
+                filename = f"{processor_type}_master_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                filepath = os.path.join(self.output_folder, filename)
+                
+                # Export to Excel
+                df.to_excel(filepath, index=False)
+                
+                return jsonify({
+                    'success': True,
+                    'filename': filename,
+                    'download_url': f'/api/download/{filename}',
+                    'exported_count': len(df)
+                })
+                
+            except Exception as e:
+                logging.error(f"Error exporting master data: {e}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)})
+        
+        # ========== EXISTING CONFIGURATION ROUTES ==========
         
         @self.app.route('/api/config/inquiry', methods=['GET'])
         def config_inquiry_route():
@@ -614,14 +832,10 @@ class App:
             try:
                 data = request.get_json()
                 
-                # Validate request using Pydantic
                 update_request = ConfigUpdateRequest(**data)
-                
-                # Update configuration
                 success = self.config_manager.update_config(update_request)
                 
                 if success:
-                    # Reload sheet processors with new configuration
                     self._reload_sheet_processors()
                     
                     return ConfigUpdateResponse(
@@ -654,7 +868,7 @@ class App:
     
     def run(self, host: str = 'localhost', port: int = 5000, debug: bool = True):
         """Run the Flask application"""
-        logging.info(f"Refactored BOQ Processing Server starting on http://{host}:{port}")
+        logging.info(f"BOQ Processing Server with CRUD API starting on http://{host}:{port}")
         self.app.run(host=host, port=port, debug=debug)
 
 if __name__ == '__main__':

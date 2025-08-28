@@ -31,9 +31,27 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./frontend:/app/frontend        # Mount frontend code
-      - ./models:/app/models            # Mount models
-      - ./storage/output:/app/storage/output
+      - ./storage/output:/app/storage/output                # Shared output folder only
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - BACKEND_URL=http://boq-backend:5000 
+    depends_on:
+      - boq-backend
+    restart: unless-stopped
+    networks:
+      - boq-network
+
+  boq-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    container_name: boq-admin
+    ports:
+      - "8502:8502"
+    volumes:
+      - ./storage/output:/app/storage/output                # Shared output folder only
     environment:
       - STREAMLIT_SERVER_HEADLESS=true
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
